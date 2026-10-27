@@ -1,6 +1,9 @@
 [CmdletBinding()]
-param([string]$Server = (Join-Path $PSScriptRoot '../target/release/urdwms-server.exe'))
+param([string]$Server)
 $ErrorActionPreference = 'Stop'
+if ([string]::IsNullOrWhiteSpace($Server)) {
+    $Server = Join-Path $PSScriptRoot '../target/release/urdwms-server.exe'
+}
 $Server = (Resolve-Path $Server).Path
 $data = Join-Path ([IO.Path]::GetTempPath()) ("urdwms smoke " + [guid]::NewGuid())
 # Exercise Windows argument quoting with a data directory containing spaces.

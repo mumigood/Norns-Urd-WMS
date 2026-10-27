@@ -140,7 +140,8 @@ CREATE TABLE IF NOT EXISTS audit_log (
 /// Columns added after the first release. SQLite has no IF NOT EXISTS for ADD
 /// COLUMN, so each is applied only when absent — an older database keeps
 /// working instead of requiring a wipe.
-const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+pub(crate) const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("inventory_item", "model", "model TEXT"),
     ("inventory_item", "meters_per_box", "meters_per_box INTEGER"),
     ("inventory_item", "supplier_code", "supplier_code TEXT"),
     ("inventory_item", "supplier", "supplier TEXT"),
@@ -183,22 +184,16 @@ pub fn open(path: &Path) -> Res<Connection> {
     let conn = Connection::open(path)?;
     // WAL lets the recognition worker read while the screen writes; the busy
     // timeout covers the rare moment both want to write.
+    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.pragma_update(None, "foreign_keys", "ON")?;
-    conn.busy_timeout(std::time::Duration::from_secs(5))?;
     Ok(conn)
 }
 
+/// Initialize or upgrade once at startup. File-backed databases receive a
+/// consistent pre-migration backup; in-memory test stores need no backup.
 pub fn init(conn: &Connection) -> Res<()> {
-    conn.execute_batch(SCHEMA)?;
-    for (table, column, ddl) in ADDED_COLUMNS {
-        let mut stmt = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-        let present: Vec<String> = stmt.query_map([], |r| r.get::<_, String>(1))?.collect::<Result<_, _>>()?;
-        if !present.iter().any(|c| c == column) {
-            conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {ddl}"), [])?;
-        }
-    }
-    Ok(())
+    crate::migration::upgrade(conn, conn.path().filter(|p| !p.is_empty()).map(Path::new))
 }
 
 /// One unit of work. Stock movement and its record commit together or not at all.

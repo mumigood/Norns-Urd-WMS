@@ -172,14 +172,19 @@ API 用 `fifo_basis` 說明目前依據哪一欄，畫面照實講「暫時改�
 `Urd-WMS-vX.Y.Z-windows-x64.zip`，解壓後執行 `Urd-WMS.exe`。安裝與首次設定見
 [`packaging/README.txt`](packaging/README.txt)。
 
-**網頁部署版**：下載 `Urd-WMS-vX.Y.Z-web-windows-x64.zip`，另備 Caddy 2，執行
-`Run-Web.ps1` 後開啟 `http://localhost:8080`。Windows 11 原生 Rust API + 預先建置的
-靜態網頁，部署機不需要 WSL、Node.js 或 Python。首次帳密 `admin` / `urdwms-admin`，
-登入後強制改密碼。埠、資料夾、區網與 HTTPS 設定見
-[`packaging/web/README.txt`](packaging/web/README.txt)。
+**整合版（桌面＋網頁，共用原資料）**：下載
+`Urd-WMS-vX.Y.Z-integrated-windows-x64.zip`，解壓後執行 `Start-WMS.cmd`。
+它依序啟動 Rust API、內附 Caddy 與 egui；Web 預設監聽 `0.0.0.0:8080`，
+本機開啟 `http://localhost:8080`，區網電腦開啟 `http://主機IP:8080`。網路轉送與防火牆由網管處理。
+Windows 11 原生執行，部署機不需要 WSL、Node.js 或 Python。
 
-所有瀏覽器共用 API 主機上的資料；egui 桌面版仍是本機獨立程式，不是遠端 API 用戶端。
-網頁版預設資料夾 `%LOCALAPPDATA%\UrdWMS-Web`，與桌面版分開。
+整合版預設沿用 `%LOCALAPPDATA%\UrdWMS`（或 `URDWMS_DATA`），egui 與 API 共用同一份資料庫。
+首次升級舊資料庫會先建立含已提交 WAL 資料的一致備份，再交易式遷移並記錄版本；
+既有帳號、庫存、設定與 uploads 保留，不需要匯出再匯入。
+關閉 egui 不會停止網頁服務；啟動視窗按 Ctrl+C 才會停止所有由它啟動的程式。
+全新空資料庫才建立 `admin` / `urdwms-admin` 並強制改密碼。
+自訂資料路徑、僅網頁模式與升級說明見
+[`packaging/web/README.txt`](packaging/web/README.txt)。
 
 | | |
 |---|---|

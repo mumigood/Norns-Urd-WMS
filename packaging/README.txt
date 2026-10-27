@@ -3,6 +3,8 @@ Urd-WMS 包材批次管理 —— Windows 版
 
 拍箱子取代抄表單：收貨建批、拍照領用（FIFO 判定）、紀錄追溯、提醒。
 單一執行檔，不需要安裝 Python、Node 或瀏覽器。
+若要同時提供瀏覽器操作，請下載 integrated-windows-x64 整合包並執行 Start-WMS.cmd；
+整合包包含同一個 egui 桌面與 Rust API，沿用相同資料目錄，無須匯出／匯入。
 
 系統需求
 --------
@@ -33,7 +35,11 @@ Urd-WMS 包材批次管理 —— Windows 版
   urdwms.log  運作日誌：每次辨識、相機擷取、畫面上跳過的錯誤（回報問題時請附上）
   crash.log   程式當掉時的紀錄
 
-備份：關掉程式後複製整個 UrdWMS 資料夾即可。
+升級舊資料庫時會先檢查完整性，建立含已提交 WAL 資料的一致備份至 backups\，
+再交易式升級並記錄 schema 版本；既有帳號、庫存、設定及 uploads 保留。
+不支援的較新版本或遷移失敗會中止，不會重置資料。
+
+備份：停止所有桌面與 API 程式後，複製整個 UrdWMS 資料夾即可。
 要放到別的位置：Urd-WMS.exe --data-dir D:\UrdWMS（可建立捷徑帶這個參數）
 
 從舊版（Python + 網頁）搬過來

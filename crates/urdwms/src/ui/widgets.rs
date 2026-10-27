@@ -390,6 +390,20 @@ pub fn search_select<T: Clone + PartialEq>(
     changed
 }
 
+/// Includes a commit signal for inline editors: selection, or blur after the popup closes.
+pub struct SuggestionResponse {
+    response: Response,
+    pub committed: bool,
+}
+
+impl std::ops::Deref for SuggestionResponse {
+    type Target = Response;
+
+    fn deref(&self) -> &Self::Target {
+        &self.response
+    }
+}
+
 /// Free text with suggestions: pick one of the known values or type a new one.
 pub fn suggest_input(
     ui: &mut Ui,
@@ -398,34 +412,63 @@ pub fn suggest_input(
     options: &[String],
     hint: &str,
     width: f32,
-) -> Response {
-    let r = text_input(ui, value, hint, width);
-    let popup_id = ui.make_persistent_id((id, "suggest"));
+) -> SuggestionResponse {
+    let input_id = ui.make_persistent_id((&id, "input"));
+    let popup_id = ui.make_persistent_id((&id, "suggest"));
+    let pending_id = input_id.with("pending_commit");
+    let editing_id = input_id.with("editing");
+    let finish_key = ui.input(|i| i.key_pressed(egui::Key::Tab) || i.key_pressed(egui::Key::Enter));
+    let mut r = ui.add_sized(
+        Vec2::new(width, 34.0),
+        egui::TextEdit::singleline(value).id(input_id).hint_text(muted(hint)).margin(Margin::symmetric(8, 7)),
+    );
     let needle = value.trim().to_lowercase();
     let matches: Vec<&String> = options
         .iter()
         .filter(|o| needle.is_empty() || o.to_lowercase().contains(&needle))
         .filter(|o| **o != *value)
-        .take(12)
         .collect();
-    if r.has_focus() && !matches.is_empty() {
-        egui::Popup::from_response(&r)
-            .id(popup_id)
-            .open(true)
-            .close_behavior(egui::PopupCloseBehavior::IgnoreClicks)
-            .width(width)
-            .show(|ui| {
+    if r.enabled() && !matches.is_empty() && (r.gained_focus() || r.clicked() || r.changed()) {
+        egui::Popup::open_id(ui.ctx(), popup_id);
+    }
+    if !r.enabled() || matches.is_empty() || finish_key {
+        egui::Popup::close_id(ui.ctx(), popup_id);
+    }
+    let mut selected = false;
+    egui::Popup::from_response(&r)
+        .id(popup_id)
+        .open_memory(None)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .width(width)
+        .show(|ui| {
+            egui::ScrollArea::vertical().max_height(300.0).show(ui, |ui| {
                 for m in matches {
                     if ui
-                        .add(egui::Button::selectable(false, m.as_str()).min_size(Vec2::new(width - 16.0, 30.0)))
+                        .add(
+                            egui::Button::selectable(false, m.as_str())
+                                .min_size(Vec2::new((width - 16.0).max(0.0), 30.0)),
+                        )
                         .clicked()
                     {
                         *value = m.clone();
+                        selected = true;
+                        ui.close();
                     }
                 }
             });
+        });
+    if selected {
+        r.mark_changed();
     }
-    r
+    // Blur on pointer-down must not save the old value before pointer-up selects an option.
+    let editing = ui.data(|d| d.get_temp::<bool>(editing_id).unwrap_or(false)) || r.has_focus() || r.changed();
+    let pending = ui.data(|d| d.get_temp::<bool>(pending_id).unwrap_or(false)) || (editing && r.lost_focus());
+    let committed = selected || (pending && !egui::Popup::is_id_open(ui.ctx(), popup_id));
+    ui.data_mut(|d| {
+        d.insert_temp(pending_id, pending && !committed);
+        d.insert_temp(editing_id, editing && !committed);
+    });
+    SuggestionResponse { response: r, committed }
 }
 
 /// Label above a control, with an optional hint underneath — form rows.
@@ -516,3 +559,7 @@ pub fn date_field(ui: &mut Ui, id: &str, value: &mut Option<String>, clearable: 
     });
     changed
 }
+
+#[cfg(test)]
+#[path = "widgets_tests.rs"]
+mod tests;

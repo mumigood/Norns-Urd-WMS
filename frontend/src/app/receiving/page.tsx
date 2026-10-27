@@ -336,7 +336,7 @@ export default function ReceivingPage() {
                   rules={[{ required: true, message: "請填進貨日期" }]}
                   extra={enteredCount > 0 ? "沿用上一批（單上的〃）" : "到貨那天"}
                 >
-                  <DatePicker style={{ width: "100%" }} disabledDate={(d) => d.isAfter(dayjs(), "day")} />
+                  <DatePicker format="YYYY-MM-DD" style={{ width: "100%" }} disabledDate={(d) => d.isAfter(dayjs(), "day")} />
                 </Form.Item>
               </Col>
               <Col xs={24} md={8}>
@@ -463,7 +463,7 @@ export default function ReceivingPage() {
 
               <InspectionRow n={2} label="製造日期" hint="先進先出就是照這個排序 —— 不填的話這批會被排到最後">
                 <Form.Item name="manufacture_date" noStyle>
-                  <DatePicker style={{ width: 220 }} placeholder="選日期" />
+                  <DatePicker format="YYYY-MM-DD" style={{ width: 220 }} placeholder="選日期" />
                 </Form.Item>
               </InspectionRow>
 
@@ -478,7 +478,7 @@ export default function ReceivingPage() {
                   noStyle
                   rules={[{ required: needsExpiry, message: "此品項有效期，必須填有效期限" }]}
                 >
-                  <DatePicker style={{ width: 220 }} placeholder="選日期" />
+                  <DatePicker format="YYYY-MM-DD" style={{ width: 220 }} placeholder="選日期" />
                 </Form.Item>
               </InspectionRow>
 

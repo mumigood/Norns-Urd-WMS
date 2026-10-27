@@ -282,6 +282,10 @@ pub struct App {
     settings: settings::SettingsPage,
     screenshots: Option<ScreenshotPlan>,
     alert_count: (u64, usize),
+    changes: Option<urdwms::live::ChangeTracker>,
+    last_change_check: Instant,
+    external_changes_pending: bool,
+    credential_stamp: Option<String>,
 }
 
 impl App {
@@ -295,6 +299,7 @@ impl App {
     ) -> Self {
         theme::install_fonts(&cc.egui_ctx);
         theme::apply(&cc.egui_ctx);
+        let changes = urdwms::live::ChangeTracker::new(&store.conn).ok();
         let mut app = App {
             shared: Shared { store, data_dir, toasts: vec![], nav: None, images: ImageCache::default(), generation: 0 },
             session: None,
@@ -312,6 +317,10 @@ impl App {
             settings: Default::default(),
             screenshots,
             alert_count: (u64::MAX, 0),
+            changes,
+            last_change_check: Instant::now(),
+            external_changes_pending: false,
+            credential_stamp: None,
         };
         if let Some(s) = auto_login {
             app.signed_in(s);
@@ -326,11 +335,13 @@ impl App {
         // Land on the first screen this role can use, with the issuing screen
         // first for operators — it is the only thing they came to do.
         self.page = if session.can("lot.create") { Page::Stock } else { Page::Issue };
+        self.credential_stamp = self.password_stamp(session.id);
         self.session = Some(session);
         self.shared.generation += 1;
     }
 
     fn sign_out(&mut self) {
+        self.credential_stamp = None;
         if let Some(s) = self.session.take() {
             service::logout(&self.shared.store, &s);
         }
@@ -353,7 +364,40 @@ impl App {
             }
         }
         self.page = page;
+        self.external_changes_pending = false;
         self.shared.generation += 1;
+    }
+
+    fn password_stamp(&self, id: i64) -> Option<String> {
+        self.shared.store.conn.query_row("SELECT password_hash FROM app_user WHERE id = ?", [id], |r| r.get(0)).ok()
+    }
+
+    fn refresh_external_changes(&mut self, ctx: &egui::Context) {
+        ctx.request_repaint_after(Duration::from_secs(1));
+        if self.last_change_check.elapsed() < Duration::from_secs(1) {
+            return;
+        }
+        self.last_change_check = Instant::now();
+        let changed = self.changes.as_mut().is_some_and(|w| w.changed(&self.shared.store.conn).unwrap_or(false));
+        if !changed {
+            return;
+        }
+        if let Some(old) = self.session.clone() {
+            let fresh = service::refresh_session(&self.shared.store, &old);
+            if fresh.is_none() || self.password_stamp(old.id) != self.credential_stamp {
+                self.sign_out();
+                self.shared.warn("帳號或密碼已由其他連線變更，請重新登入");
+                return;
+            }
+            self.session = fresh;
+        }
+        // These editors keep draft fields in their cached rows. Refreshing
+        // on an unrelated login/audit write must not erase what is being typed.
+        if matches!(self.page, Page::Basics | Page::Settings | Page::Issue) {
+            self.external_changes_pending = true;
+        } else {
+            self.shared.generation += 1;
+        }
     }
 
     fn login_view(&mut self, ui: &mut Ui) {
@@ -523,6 +567,7 @@ impl App {
             self.password = None;
             self.shared.ok("密碼已更改");
             if let Some(fresh) = service::refresh_session(&self.shared.store, &session) {
+                self.credential_stamp = self.password_stamp(fresh.id);
                 self.session = Some(fresh);
             }
         } else if close {
@@ -661,6 +706,7 @@ fn nav_item(ui: &mut Ui, page: Page, selected: bool, badge: Option<usize>) -> eg
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.refresh_external_changes(&ctx);
         self.screenshot_step(&ctx);
         let Some(session) = self.session.clone() else {
             self.login_view(ui);
@@ -692,6 +738,14 @@ impl eframe::App for App {
                         &format!("{}（{}）沒有這個畫面的權限。", session_now.name, session_now.role_label),
                     );
                     return;
+                }
+                if self.external_changes_pending {
+                    widgets::alert(
+                        ui,
+                        Kind::Info,
+                        "其他連線已更新資料",
+                        "目前輸入會保留；切換頁面後重新載入。送出時仍會檢查最新庫存。",
+                    );
                 }
                 let shared = &mut self.shared;
                 match self.page {

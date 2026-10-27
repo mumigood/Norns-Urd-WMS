@@ -375,17 +375,17 @@ export default function StockPage() {
           <Row gutter={16}>
             <Col span={8}>
               <Form.Item name="receipt_date" label="進貨日期" extra="FIFO 排序鍵">
-                <DatePicker style={{ width: "100%" }} disabledDate={(d) => d.isAfter(dayjs(), "day")} />
+                <DatePicker format="YYYY-MM-DD" style={{ width: "100%" }} disabledDate={(d) => d.isAfter(dayjs(), "day")} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="manufacture_date" label="製造日期" extra="同進貨日時用來決定誰先領">
-                <DatePicker style={{ width: "100%" }} />
+                <DatePicker format="YYYY-MM-DD" style={{ width: "100%" }} />
               </Form.Item>
             </Col>
             <Col span={8}>
               <Form.Item name="expiry_date" label="有效期限">
-                <DatePicker style={{ width: "100%" }} />
+                <DatePicker format="YYYY-MM-DD" style={{ width: "100%" }} />
               </Form.Item>
             </Col>
           </Row>

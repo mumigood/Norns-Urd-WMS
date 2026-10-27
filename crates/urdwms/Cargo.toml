@@ -31,7 +31,7 @@ urdwms-core = { path = "../urdwms-core" }
 eframe = { optional = true, version = "0.37", default-features = false, features = ["glow", "default_fonts", "accesskit", "clipboard", "links", "wayland", "x11"] }
 egui = { optional = true, version = "0.37", features = ["monochrome_emoji_fonts"] }
 egui_extras = { optional = true, version = "0.37", default-features = false, features = ["datepicker"] }
-rusqlite = { version = "0.37", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled", "backup"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }

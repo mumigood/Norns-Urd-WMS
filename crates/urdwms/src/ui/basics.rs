@@ -242,8 +242,7 @@ impl BasicsPage {
                         self.save_cell(shared, user, item, "spec");
                     }
                     let supplier = self.cells.entry((item.id, "supplier")).or_default();
-                    if suggest_input(ui, ("sup", item.id), supplier, &self.options.supplier, "—", 110.0).lost_focus()
-                    {
+                    if suggest_input(ui, ("sup", item.id), supplier, &self.options.supplier, "—", 110.0).committed {
                         self.save_cell(shared, user, item, "supplier");
                     }
                     let code = self.cells.entry((item.id, "supplier_code")).or_default();
@@ -255,7 +254,7 @@ impl BasicsPage {
                         self.save_cell(shared, user, item, "meters_per_box");
                     }
                     let unit = self.cells.entry((item.id, "pack_unit")).or_default();
-                    if suggest_input(ui, ("unit", item.id), unit, &self.units, "—", 56.0).lost_focus() {
+                    if suggest_input(ui, ("unit", item.id), unit, &self.units, "—", 56.0).committed {
                         self.save_cell(shared, user, item, "pack_unit");
                     }
                     let mut expiry = item.has_expiry;

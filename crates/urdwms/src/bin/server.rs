@@ -2,7 +2,7 @@
 use std::{net::SocketAddr, path::PathBuf};
 use urdwms::{applog, seed, service::Store, web};
 
-const HELP: &str = "Urd-WMS API\n\nurdwms-server [--listen 127.0.0.1:8071] [--data-dir PATH] [--demo]\n\n--listen     HTTP 監聽位址（預設 127.0.0.1:8071）\n--data-dir   資料目錄（預設 URDWMS_DATA 或使用者 UrdWMS-Web 目錄）\n--demo       空資料庫時建立示範資料\n--version    顯示版本\n";
+const HELP: &str = "Urd-WMS API\n\nurdwms-server [--listen 127.0.0.1:8071] [--data-dir PATH] [--demo]\n\n--listen     HTTP 監聽位址（預設 127.0.0.1:8071）\n--data-dir   資料目錄（預設 URDWMS_DATA 或原本 egui 的 UrdWMS 目錄）\n--demo       空資料庫時建立示範資料\n--version    顯示版本\n";
 
 #[derive(Debug)]
 struct Args {
@@ -10,18 +10,8 @@ struct Args {
     data_dir: PathBuf,
     demo: bool,
 }
-fn default_data_dir() -> PathBuf {
-    if let Some(dir) = std::env::var_os("URDWMS_DATA") {
-        return dir.into();
-    }
-    #[cfg(windows)]
-    if let Some(dir) = std::env::var_os("LOCALAPPDATA") {
-        return PathBuf::from(dir).join("UrdWMS-Web");
-    }
-    std::env::var_os("HOME")
-        .map(|h| PathBuf::from(h).join(".local/share/urdwms-web"))
-        .unwrap_or_else(|| PathBuf::from("urdwms-web-data"))
-}
+use urdwms::data_dir::default_data_dir;
+
 fn parse(args: impl Iterator<Item = String>) -> Result<Args, String> {
     let mut args = args;
     let mut result = Args { listen: "127.0.0.1:8071".parse().unwrap(), data_dir: default_data_dir(), demo: false };
@@ -51,8 +41,9 @@ async fn main() {
     }
     let result = async {
         let args = parse(args.into_iter()).map_err(std::io::Error::other)?;
-        let store = Store::open(&args.data_dir)?;
+        std::fs::create_dir_all(&args.data_dir)?;
         applog::init(&args.data_dir);
+        let store = Store::open(&args.data_dir)?;
         if args.demo {
             seed::demo(&store.conn)?;
         }

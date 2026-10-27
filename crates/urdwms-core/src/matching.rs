@@ -291,6 +291,8 @@ fn match_on(
 /// share a manufacture date the 製造日 pass is genuinely ambiguous, and the
 /// receipt date is exactly what tells them apart.
 ///
+/// Exact normalized manufacture-date matches restrict both passes to those lots.
+/// Without an exact match, the existing fuzzy matching and receipt fallback apply.
 /// Both passes run against the closed candidate set of in-stock lots (§2.2),
 /// so a misread lands on a real lot or on nothing — never on a date that was
 /// never received.
@@ -307,6 +309,15 @@ pub fn match_candidates(
     if recognized.is_none() && manufacture.is_none() {
         return MatchResult::defer(DeferReason::NoRecognition);
     }
+
+    // An exact normalized manufacture date constrains identity. Receipt-date
+    // fallback must not escape this group or be confused by unrelated lots.
+    let same_manufacture: Vec<Candidate> = manufacture
+        .map(|m| {
+            candidates.iter().filter(|c| c.manufacture_key().as_deref() == Some(m.key.as_str())).cloned().collect()
+        })
+        .unwrap_or_default();
+    let candidates = if same_manufacture.is_empty() { candidates } else { &same_manufacture };
 
     let mut attempts = Vec::new();
     if let Some(m) = manufacture {
@@ -569,6 +580,37 @@ mod tests {
         assert!(r.locked());
         assert_eq!(r.lot_id.as_deref(), Some("b"));
         assert_eq!(r.matched_on, Some("receipt_date"));
+    }
+
+    #[test]
+    fn receipt_fallback_stays_with_exact_manufacture_date() {
+        let pool = vec![
+            Candidate::new("a", "2026-06-09", Some("2026-03-22")),
+            Candidate::new("b", "2026-07-07", Some("2026-03-22")),
+            Candidate::new("c", "2026-12-31", Some("2026-04-23")),
+        ];
+        let result = match_lot(Some(&dk("2026-12-31")), &pool, Some(&dk("22.03.2026")));
+        assert!(!result.locked(), "must not select a different manufacture date");
+    }
+
+    #[test]
+    fn outside_lot_cannot_make_receipt_match_ambiguous() {
+        let pool = vec![
+            Candidate::new("a", "2026-06-09", Some("2026-03-22")),
+            Candidate::new("b", "2026-07-07", Some("2026-03-22")),
+            Candidate::new("c", "2026-07-07", Some("2026-04-23")),
+        ];
+        let result = match_lot(Some(&dk("2026-07-07")), &pool, Some(&dk("2026年03月22日")));
+        assert_eq!(result.lot_id.as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn same_manufacture_without_receipt_defers() {
+        let pool = vec![
+            Candidate::new("a", "2026-06-09", Some("2026-03-22")),
+            Candidate::new("b", "2026-07-07", Some("2026-03-22")),
+        ];
+        assert!(!match_lot(None, &pool, Some(&dk("2026-03-22"))).locked());
     }
 
     #[test]

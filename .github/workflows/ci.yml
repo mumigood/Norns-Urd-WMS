@@ -51,6 +51,9 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
             if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
           }
+      - name: Test launcher defaults on Windows PowerShell 5.1
+        shell: powershell
+        run: ./packaging/Test-LauncherDefaults.ps1
       - name: Smoke headless API on Windows
         shell: pwsh
         run: ./packaging/Smoke-Api.ps1
@@ -68,17 +71,20 @@ jobs:
         working-directory: frontend
       - run: pnpm build
         working-directory: frontend
-      - name: Assemble static web deployment
+      - name: Assemble integrated desktop and web deployment
         shell: pwsh
         run: |
           if (!(Test-Path frontend/out/index.html)) { throw 'Static export missing index.html' }
           New-Item -ItemType Directory web-package | Out-Null
           Copy-Item packaging/web/* web-package/ -Recurse
           Copy-Item target/release/urdwms-server.exe web-package/
+          Copy-Item target/release/urdwms.exe web-package/Urd-WMS.exe
+          Copy-Item crates/urdwms/assets/fonts/OFL.txt web-package/LICENSE-font-NotoSansTC-OFL.txt
+          ./packaging/Get-Caddy.ps1 -Destination web-package
           Copy-Item frontend/out web-package/www -Recurse
       - uses: actions/upload-artifact@v4
         with:
-          name: urdwms-web-windows-${{ github.sha }}
+          name: urdwms-integrated-windows-${{ github.sha }}
           path: web-package/
           retention-days: 14
       - uses: actions/upload-artifact@v4

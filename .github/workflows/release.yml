@@ -38,6 +38,9 @@ jobs:
             [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
             if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
           }
+      - name: Test launcher defaults on Windows PowerShell 5.1
+        shell: powershell
+        run: ./packaging/Test-LauncherDefaults.ps1
       - name: Smoke headless API on Windows
         shell: pwsh
         run: ./packaging/Smoke-Api.ps1
@@ -67,10 +70,13 @@ jobs:
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower() + "  $dir.zip" | Out-File -Encoding ascii "$dir.zip.sha256"
           if (!(Test-Path frontend/out/index.html)) { throw 'Static export missing index.html' }
-          $webDir = "Urd-WMS-$tag-web-windows-x64"
+          $webDir = "Urd-WMS-$tag-integrated-windows-x64"
           New-Item -ItemType Directory $webDir | Out-Null
           Copy-Item packaging/web/* "$webDir/" -Recurse
           Copy-Item target/release/urdwms-server.exe "$webDir/"
+          Copy-Item target/release/urdwms.exe "$webDir/Urd-WMS.exe"
+          Copy-Item crates/urdwms/assets/fonts/OFL.txt "$webDir/LICENSE-font-NotoSansTC-OFL.txt"
+          ./packaging/Get-Caddy.ps1 -Destination $webDir
           Copy-Item frontend/out "$webDir/www" -Recurse
           Compress-Archive -Path $webDir -DestinationPath "$webDir.zip"
           (Get-FileHash "$webDir.zip" -Algorithm SHA256).Hash.ToLower() + "  $webDir.zip" | Out-File -Encoding ascii "$webDir.zip.sha256"
@@ -82,7 +88,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $notes = "Windows 10/11 x64 單一執行檔。解壓後執行 Urd-WMS.exe，第一次啟動會建立資料庫（%LOCALAPPDATA%\UrdWMS）。另附 web-windows-x64 網頁部署包（Rust API + 靜態網頁，Caddy 需另備）。兩種模式詳見各壓縮檔內 README.txt。"
+          $notes = "Windows 10/11 x64 單一執行檔。解壓後執行 Urd-WMS.exe，第一次啟動會建立資料庫（%LOCALAPPDATA%\UrdWMS）。另附 integrated-windows-x64 整合包（egui + Rust API + 靜態網頁 + Caddy）。執行 Start-WMS.cmd，桌面與瀏覽器共用原有資料。兩種模式詳見各壓縮檔內 README.txt。"
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG $env:ZIP "$env:ZIP.sha256" $env:WEB_ZIP "$env:WEB_ZIP.sha256" --clobber

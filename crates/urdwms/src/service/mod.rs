@@ -38,8 +38,9 @@ pub struct Store {
 
 impl Store {
     pub fn open(data_dir: &Path) -> Res<Store> {
-        let conn = db::open(&data_dir.join("urdwms.db"))?;
-        db::init(&conn)?;
+        let database = data_dir.join("urdwms.db");
+        let conn = db::open(&database)?;
+        crate::migration::upgrade(&conn, Some(&database))?;
         std::fs::create_dir_all(data_dir.join("uploads"))?;
         Ok(Store { conn, data_dir: data_dir.to_path_buf() })
     }

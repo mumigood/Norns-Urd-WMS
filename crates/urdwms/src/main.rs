@@ -29,18 +29,7 @@ struct Args {
     as_user: Option<String>,
 }
 
-fn default_data_dir() -> PathBuf {
-    if let Ok(dir) = std::env::var("URDWMS_DATA") {
-        return dir.into();
-    }
-    #[cfg(windows)]
-    if let Ok(local) = std::env::var("LOCALAPPDATA") {
-        return PathBuf::from(local).join("UrdWMS");
-    }
-    std::env::var("HOME")
-        .map(|h| PathBuf::from(h).join(".local/share/urdwms"))
-        .unwrap_or_else(|_| PathBuf::from("urdwms-data"))
-}
+use urdwms::data_dir::default_data_dir;
 
 fn parse_args() -> Result<Args, String> {
     let mut args = Args { data_dir: default_data_dir(), demo: false, screenshot: None, as_user: None };
