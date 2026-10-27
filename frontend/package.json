@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "next dev -p 3071",
     "build": "next build",
-    "test": "tsc src/lib/api.ts --outDir .test-build --module commonjs --target ES2022 --skipLibCheck && node --test tests/*.test.cjs"
+    "test": "tsc src/lib/api.ts src/lib/camera-watch.ts --outDir .test-build --module commonjs --target ES2022 --skipLibCheck && node --test tests/*.test.cjs"
   },
   "dependencies": {
     "@ant-design/icons": "^6.0.0",

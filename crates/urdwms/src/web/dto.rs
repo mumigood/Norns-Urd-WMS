@@ -35,6 +35,6 @@ pub fn proposal_json(store: &Store, p: &Proposal) -> Result<Value, ApiError> {
         "source_name":p.source_name,"source_time":p.source_time,"item_id":p.item_id,"item_name":p.item_name,"item_model":p.item_model,"item_label":p.item_label(),
         "item_match":{"decision":if p.item_id.is_some(){"lock"}else{"defer"},"item_id":p.item_id,"matched_on":p.item_matched_on,"reason":p.item_defer_reason,"contenders":p.item_contenders},
         "catalogue":catalogue,"candidates":candidates,"expected_supplier_code":expected,"decision":p.decision,"defer_reason":p.defer_reason,"match_distance":p.match_distance,
-        "lot_matched_on":p.lot_matched_on,"locked_lot":locked,"fifo_ok":p.fifo_ok,"fifo_expected_date":p.fifo_expected_date,"fifo_target_lot_id":p.fifo_target_lot_id,"fifo_basis":p.fifo_basis}),
+        "manufacture_candidate_ids":p.manufacture_candidate_ids,"match_explanation":p.match_explanation(),"display_dates":{"manufacture":p.manufacture_display(),"receipt":p.receipt_display()},"lot_matched_on":p.lot_matched_on,"locked_lot":locked,"fifo_ok":p.fifo_ok,"fifo_expected_date":p.fifo_expected_date,"fifo_target_lot_id":p.fifo_target_lot_id,"fifo_basis":p.fifo_basis}),
     )
 }

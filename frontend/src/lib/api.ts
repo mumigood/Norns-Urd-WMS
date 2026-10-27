@@ -147,6 +147,9 @@ export type Proposal = {
   decision: "lock" | "defer";
   defer_reason: string | null;
   match_distance: number | null;
+  manufacture_candidate_ids?: number[];
+  match_explanation?: string;
+  display_dates?: { manufacture: string; receipt: string };
   /** 是哪個日期認出這一批的。manufacture_date（印的）比 receipt_date（手蓋章）可信 */
   lot_matched_on: "manufacture_date" | "receipt_date" | null;
   /** FIFO 現在該領哪一批。用來在拿錯時直接指出正確那箱 */

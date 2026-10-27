@@ -472,12 +472,12 @@ impl IssuePage {
                 ui.label(muted("型號"));
                 ui.label(strong(r.model_code.clone().or(r.item_code.clone()).unwrap_or_else(|| "讀不出來".into())));
                 ui.label(muted("製造日期"));
-                ui.label(strong(r.manufacture_date.clone().unwrap_or_else(|| "讀不出來".into())));
+                ui.label(strong(proposal.manufacture_display()));
                 ui.end_row();
                 ui.label(muted("箱上料號"));
                 ui.label(or_dash(r.item_code.as_deref()));
                 ui.label(muted("驗收章"));
-                ui.label(or_dash(r.receipt_date.as_deref()));
+                ui.label(proposal.receipt_display());
                 ui.end_row();
             });
             if !proposal.recognition.notes.is_empty() {
@@ -501,7 +501,7 @@ impl IssuePage {
         let (color, icon, heading) = match (&p.locked_lot, p.fifo_ok) {
             (Some(_), Some(true)) => (OK, "✔", "可以拿"),
             (Some(_), _) => (BAD, "✖", "這箱先別拿"),
-            (None, _) => (WARN, "?", "認得出品項，但讀不出是哪一批"),
+            (None, _) => (WARN, "?", "認得出品項，尚未鎖定批次"),
         };
         Frame::new().fill(color).corner_radius(CornerRadius::same(12)).inner_margin(Margin::same(28)).show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -560,14 +560,7 @@ impl IssuePage {
                     ));
                 }
                 (None, _) => {
-                    ui.label(white(
-                        format!(
-                            "生產日期讀到「{}」，跟在庫的批次都對不起來。",
-                            p.recognition.manufacture_date.as_deref().unwrap_or("讀不出")
-                        ),
-                        19.0,
-                        false,
-                    ));
+                    ui.label(white(p.match_explanation(), 19.0, false));
                     ui.label(white("照片已留存。請在下面挑正確的批次。".into(), 17.0, false));
                 }
             }
@@ -584,7 +577,9 @@ impl IssuePage {
                 format!("{} 在庫批次的製造日期", p.item_label().unwrap_or("這個品項")),
                 |_| {},
                 |ui| {
-                    for lot in &self.lots {
+                    for lot in self.lots.iter().filter(|l| {
+                        p.manufacture_candidate_ids.is_empty() || p.manufacture_candidate_ids.contains(&l.id)
+                    }) {
                         let this = p.locked_lot.as_ref().is_some_and(|l| l.lot_id == lot.id);
                         row_frame(this).show(ui, |ui| {
                             ui.set_width(ui.available_width());

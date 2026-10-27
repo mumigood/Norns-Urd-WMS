@@ -415,9 +415,13 @@ mod tests {
             "POST",
             "/api/resolve-item",
             &q,
-            json!({"item_id":id,"ocr_manufacture_date":"2025-09-26"}),
+            json!({"item_id":id,"ocr_manufacture_date":"26-Sep-25","ocr_receipt_date":"2026-03-26"}),
         )
         .unwrap();
+        assert_eq!(p["display_dates"]["manufacture"], "2025-09-26");
+        assert_eq!(p["display_dates"]["receipt"], "2026-03-26");
+        assert_eq!(p["recognition"]["manufacture_date"], "26-Sep-25");
+        assert!(!p["manufacture_candidate_ids"].as_array().unwrap().is_empty());
         assert_eq!(p["decision"], "lock");
         assert_eq!(p["fifo_ok"], true);
         assert_eq!(p["item_match"]["matched_on"], "manual");

@@ -43,6 +43,7 @@ pub struct Proposal {
     /// Which date on the box named the lot.
     pub lot_matched_on: Option<&'static str>,
     pub match_distance: Option<f64>,
+    pub manufacture_candidate_ids: Vec<i64>,
     pub locked_lot: Option<LockedLot>,
     pub fifo_ok: Option<bool>,
     pub fifo_expected_date: Option<String>,
@@ -55,14 +56,45 @@ impl Proposal {
         self.item_model.as_deref().or(self.item_name.as_deref())
     }
 
+    pub fn manufacture_display(&self) -> String {
+        display_date(self.recognition.manufacture_date.as_deref())
+    }
+
+    pub fn receipt_display(&self) -> String {
+        display_date(self.recognition.receipt_date.as_deref())
+    }
+
+    pub fn match_explanation(&self) -> String {
+        let made = self.manufacture_display();
+        let receipt = self.receipt_display();
+        let count = self.manufacture_candidate_ids.len();
+        if self.locked_lot.is_some() {
+            return format!("已鎖定批次；製造日 {made}，驗收章日期 {receipt}。");
+        }
+        if count > 0 {
+            format!(
+                "製造日 {made} 符合 {count} 批；驗收章日期 {receipt} 無法唯一對應這些批次的進貨日，請核對驗收章與收貨紀錄。"
+            )
+        } else if self.defer_reason == Some("ambiguous") {
+            format!("製造日 {made}、驗收章日期 {receipt} 有多個接近的批次，請人工確認。")
+        } else {
+            format!("製造日 {made}、驗收章日期 {receipt} 無法對應在庫批次，請核對日期與收貨紀錄。")
+        }
+    }
+
     /// The photo names a manufacture date, but no lot on hand carries it: the
     /// box in hand is not on the books. Different from a FIFO miss — following
     /// the preselected lot would create a record pointing at the wrong lot.
     pub fn photo_disagrees(&self) -> bool {
         self.recognition.manufacture_date.is_some()
+            && self.manufacture_candidate_ids.is_empty()
             && self.decision == "defer"
             && self.defer_reason == Some("no_candidate")
     }
+}
+
+fn display_date(raw: Option<&str>) -> String {
+    to_date_key(raw).and_then(|d| d.iso).or_else(|| raw.map(str::to_string)).unwrap_or_else(|| "未讀到".into())
 }
 
 /// Recognise a saved image and match it against stock.
@@ -125,6 +157,12 @@ fn lot_lookup(conn: &Connection, item_id: i64, reading: &Recognition, out: &mut 
     let (name, model): (Option<String>, Option<String>) = conn
         .query_row("SELECT name, model FROM inventory_item WHERE id = ?", [item_id], |r| Ok((r.get(0)?, r.get(1)?)))
         .unwrap_or((None, None));
+    let manufacture = to_date_key(reading.manufacture_date.as_deref());
+    out.manufacture_candidate_ids = pool
+        .iter()
+        .filter(|c| manufacture.as_ref().is_some_and(|m| c.manufacture_key().as_deref() == Some(m.key.as_str())))
+        .filter_map(|c| c.lot_id.parse().ok())
+        .collect();
     let result = match_lot(
         to_date_key(reading.receipt_date.as_deref()).as_ref(),
         &pool,
@@ -190,6 +228,30 @@ mod tests {
 
     fn reading(model: &str, made: &str) -> Fixed {
         Fixed(Recognition { model_code: Some(model.into()), manufacture_date: Some(made.into()), ..Default::default() })
+    }
+
+    #[test]
+    fn matching_manufacture_with_unlisted_receipt_explains_the_real_mismatch() {
+        let s = store();
+        let item: i64 =
+            s.conn.query_row("SELECT id FROM inventory_item WHERE model='T6050BSW'", [], |r| r.get(0)).unwrap();
+        s.conn.execute("UPDATE inventory_lot SET qty_on_hand=0 WHERE item_id=?", [item]).unwrap();
+        for receipt in ["2026-06-09", "2026-07-07", "2026-07-22", "2026-08-12", "2026-09-30", "2026-10-22"] {
+            s.conn.execute("INSERT INTO inventory_lot(item_id,receipt_date,manufacture_date,qty_on_hand,created_at,created_by) VALUES (?,?,'2026-03-22',2,'2026-10-27','test')", rusqlite::params![item, receipt]).unwrap();
+        }
+        let read = Fixed(Recognition {
+            model_code: Some("T6050BSW".into()),
+            manufacture_date: Some("22.03.2026".into()),
+            receipt_date: Some("2026-03-26".into()),
+            ..Default::default()
+        });
+        let p = recognise(&s.conn, &read, b"", None).unwrap();
+        assert_eq!(p.decision, "defer");
+        assert_eq!(p.manufacture_candidate_ids.len(), 6);
+        assert!(!p.photo_disagrees());
+        assert!(p.match_explanation().contains("2026-03-22"));
+        assert!(p.match_explanation().contains("2026-03-26"));
+        assert!(!p.match_explanation().contains("都對不起來"));
     }
 
     #[test]

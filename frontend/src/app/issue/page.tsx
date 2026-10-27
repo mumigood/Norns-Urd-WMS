@@ -1,5 +1,6 @@
 "use client";
 
+import { CameraWatch } from "@/lib/camera-watch";
 import AuthenticatedImage from "@/components/AuthenticatedImage";
 
 /**
@@ -69,7 +70,7 @@ function IssueScreen() {
   // 資料夾來源要另外認：它不是「連得到相機」，而是「等相機把圖存下來」，
   // 拍照那一步的畫面完全不同 —— 沒有按鈕可按，只能等。
   const [folderSource, setFolderSource] = useState(false);
-  const [waitSince, setWaitSince] = useState<number | null>(null);
+
   const [lastSeen, setLastSeen] = useState<string | null>(null);
   const [stage, setStage] = useState<Stage>("拍照");
   const [itemId, setItemId] = useState<number>();
@@ -85,6 +86,12 @@ function IssueScreen() {
   const [verdict, setVerdict] = useState<Verdict>(null);
   const [form] = Form.useForm();
   const fileRef = useRef<HTMLInputElement>(null);
+  const cameraWatch = useRef(new CameraWatch());
+  const monitorActive = useRef(false);
+  const editingCapture = useRef(false);
+  monitorActive.current = folderSource && (stage === "等待" || stage === "判定") && !busy && !scanning && !verdict;
+  const scanRef = useRef(runScan);
+  scanRef.current = runScan;
 
   const machines = (dict?.entries.machine ?? []).map((e) => e.value);
   const products = (dict?.entries.packed_product ?? []).map((e) => e.value);
@@ -130,33 +137,30 @@ function IssueScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [itemId, stage]);
 
-  // 等相機：一直看資料夾裡最新那張是不是比「開始等」還新。
-  //
-  // 判準是「比按下去的時間新」而不是「五分鐘內」—— 五分鐘內也可能是上一箱的照片，
-  // 而操作員按下按鈕的那一刻，就是他宣告「接下來這張是我這箱」的時點。
+  // The camera is attached to the backend. Keep watching after each verdict;
+  // deduplicate by server file identity, and pause during editing/submission.
   useEffect(() => {
-    if (stage !== "等待" || waitSince == null) return;
+    if (!folderSource) return;
     let alive = true;
-    const timer = setInterval(async () => {
+    const poll = async () => {
       try {
-        const latest = await api.latestImage();
-        if (!alive || !latest.ok || !latest.source_time) return;
-        setLastSeen(latest.source_time);
-        if (new Date(latest.source_time).getTime() <= waitSince) return;
-        clearInterval(timer);
-        await runScan(api.captureFromCamera);
-      } catch {
-        // 輪詢失敗不打斷等待 —— 後端重啟或網路抖一下，下一秒再試就好
-      }
-    }, POLL_MS);
+        await cameraWatch.current.poll(async () => {
+          const latest = await api.latestImage();
+          if (alive && latest.source_time) setLastSeen(latest.source_time);
+          return latest;
+        }, () => scanRef.current(api.captureFromCamera),
+        () => alive && monitorActive.current && !editingCapture.current && !form.isFieldsTouched());
+      } catch { /* Retry backend/network errors on the next poll. */ }
+    };
+    void poll();
+    const timer = setInterval(poll, POLL_MS);
     return () => { alive = false; clearInterval(timer); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stage, waitSince]);
+  }, [folderSource, form]);
 
   const startWaiting = useCallback(() => {
+    editingCapture.current = false;
     setCapture(null);
     setLastSeen(null);
-    setWaitSince(Date.now());
     setStage("等待");
   }, []);
 
@@ -182,9 +186,9 @@ function IssueScreen() {
   // 判斷交給後端：日期格式的正規化（22.03.2026 vs 2026-03-22 是同一天）和 OCR
   // 混淆距離都在 urdwms_core 裡，前端自己拿字串比一定會比錯 —— 那正是這個 bug
   // 一開始的成因。
-  const photoDate = capture?.recognition.manufacture_date ?? null;
+  const photoDate = capture?.display_dates?.manufacture ?? capture?.recognition.manufacture_date ?? null;
   const photoDisagrees = Boolean(
-    photoDate && capture?.decision === "defer" && capture?.defer_reason === "no_candidate",
+    photoDate && !capture?.manufacture_candidate_ids?.length && capture?.decision === "defer" && capture?.defer_reason === "no_candidate",
   );
 
   async function runScan(source: () => Promise<Proposal>) {
@@ -197,11 +201,13 @@ function IssueScreen() {
         // the reason on screen rather than leaving them somewhere unusable.
         setStage("手動");
         setItemId(undefined);
-        return;
+        return result;
       }
       setItemId(result.item_id);
       await loadLots(result.item_id, result.locked_lot?.lot_id);
+      if (!result.locked_lot) setLotId(undefined);
       setStage("判定");
+      return result;
     } catch (e) {
       // 照片太舊不是故障，是還沒拍 —— 回去繼續等，不要把人踢進手動登錄
       if (e instanceof StaleImage) {
@@ -243,10 +249,10 @@ function IssueScreen() {
   }
 
   function reset(to: Stage = "拍照") {
+    editingCapture.current = false;
     setCapture(null);
     setVerdict(null);
     setQty(1);
-    setWaitSince(null);
     setLastSeen(null);
     form.resetFields();
     setStage(to);
@@ -353,7 +359,7 @@ function IssueScreen() {
               <Spin size="large" />
               <div style={{ fontSize: 24, fontWeight: 600 }}>去拍這一箱</div>
               <Text type="secondary" style={{ fontSize: 16 }}>
-                拍完存進資料夾就會自動開始辨識，不用回來按任何東西。
+                後端相機存入新照片後，網頁會自動更新辨識結果。
               </Text>
             </div>
 
@@ -369,7 +375,7 @@ function IssueScreen() {
               <Button
                 size="large"
                 icon={<UnorderedListOutlined />}
-                onClick={() => { setWaitSince(null); setStage("手動"); }}
+                onClick={() => { setStage("手動"); }}
                 style={{ height: TOUCH, fontSize: 18, minWidth: 180 }}
               >
                 改手動登錄
@@ -387,6 +393,7 @@ function IssueScreen() {
         </Card>
       )}
 
+      {folderSource && <Alert type="info" showIcon style={{ marginBottom: 16 }} message={stage === "手動" || busy || verdict ? "手動編輯或送出中，已暫停更新" : "持續監聽後端相機新照片；填寫領用資料時暫停更新"} />}
       {stage === "判定" && capture && (
         <ScanVerdict
           capture={capture}
@@ -413,7 +420,7 @@ function IssueScreen() {
                   <Space orientation="vertical" size={2}>
                     <span>
                       型號：{capture.recognition.model_code ?? capture.recognition.item_code ?? "讀不出來"}
-                      ｜生產日期：{capture.recognition.manufacture_date ?? "讀不出來"}
+                      ｜生產日期：{capture.display_dates?.manufacture ?? capture.recognition.manufacture_date ?? "讀不出來"}
                     </span>
                     {capture.recognition.notes && (
                       <Text type="secondary">{capture.recognition.notes}</Text>
@@ -531,11 +538,11 @@ function IssueScreen() {
             >
               <Radio.Group
                 value={lotId}
-                onChange={(e) => setLotId(e.target.value)}
+                onChange={(e) => { editingCapture.current = true; setLotId(e.target.value); }}
                 style={{ display: "block" }}
               >
                 <Space orientation="vertical" style={{ width: "100%" }} size={12}>
-                  {lots.map((lot) => (
+                  {lots.filter((lot) => stage === "手動" || !capture?.manufacture_candidate_ids?.length || capture.manufacture_candidate_ids.includes(lot.id)).map((lot) => (
                     <Radio
                       key={lot.id}
                       value={lot.id}
@@ -601,7 +608,7 @@ function IssueScreen() {
               <Button
                 size="large" style={{ height: TOUCH, width: TOUCH, fontSize: 28 }}
                 disabled={qty <= 1}
-                onClick={() => setQty((n) => Math.max(1, n - 1))}
+                onClick={() => { editingCapture.current = true; setQty((n) => Math.max(1, n - 1)); }}
               >
                 −
               </Button>
@@ -610,13 +617,13 @@ function IssueScreen() {
                 min={1}
                 max={chosenLot?.qty_on_hand ?? 1}
                 value={qty}
-                onChange={(v) => setQty(Math.max(1, Number(v) || 1))}
+                onChange={(v) => { editingCapture.current = true; setQty(Math.max(1, Number(v) || 1)); }}
                 style={{ width: 120, height: TOUCH, fontSize: 24 }}
               />
               <Button
                 size="large" style={{ height: TOUCH, width: TOUCH, fontSize: 28 }}
                 disabled={qty >= (chosenLot?.qty_on_hand ?? 1)}
-                onClick={() => setQty((n) => n + 1)}
+                onClick={() => { editingCapture.current = true; setQty((n) => n + 1); }}
               >
                 ＋
               </Button>
@@ -717,7 +724,7 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
   // two into "failed" would tell someone to go swap a box we never identified.
   const state = !locked ? "unknown" : capture.fifo_ok ? "ok" : "wrong";
   const colour = state === "ok" ? OK : state === "wrong" ? BAD : WARN;
-  const heading = state === "ok" ? "可以拿" : state === "wrong" ? "這箱先別拿" : "認得出品項，但讀不出是哪一批";
+  const heading = state === "ok" ? "可以拿" : state === "wrong" ? "這箱先別拿" : "認得出品項，尚未鎖定批次";
   const Icon = state === "ok" ? CheckCircleFilled : state === "wrong" ? CloseCircleFilled : QuestionCircleFilled;
 
   return (
@@ -759,7 +766,7 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
 
         {state === "unknown" && (
           <div style={{ fontSize: 19, marginTop: 20, lineHeight: 1.7 }}>
-            生產日期讀到「{capture.recognition.manufacture_date ?? "讀不出"}」，跟在庫的批次都對不起來。
+            {capture.match_explanation ?? "日期無法唯一對應批次，請核對製造日與驗收章。"}
             <div style={{ opacity: 0.9, fontSize: 17 }}>照片已留存。請在下面挑正確的批次。</div>
           </div>
         )}
@@ -800,8 +807,9 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
               </Col>
               <Col xs={24} md={12}>
                 製造日期：
-                <strong>{capture.recognition.manufacture_date ?? "讀不出來"}</strong>
+                <strong>{capture.display_dates?.manufacture ?? capture.recognition.manufacture_date ?? "讀不出來"}</strong>
               </Col>
+              <Col xs={24} md={12}>驗收章日期：<strong>{capture.display_dates?.receipt ?? capture.recognition.receipt_date ?? "未讀到"}</strong></Col>
             </Row>
           </div>
         </Card>
@@ -816,7 +824,7 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
           styles={{ body: { padding: 16 } }}
         >
           <Space orientation="vertical" size={8} style={{ width: "100%" }}>
-            {lots.map((lot) => {
+            {lots.filter((lot) => !capture.manufacture_candidate_ids?.length || capture.manufacture_candidate_ids.includes(lot.id)).map((lot) => {
               const isThis = locked?.lot_id === lot.id;
               return (
                 <div
