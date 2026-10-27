@@ -63,6 +63,7 @@ pub struct IssuePage {
     item_id: Option<i64>,
     lots: Vec<Lot>,
     lot_id: Option<i64>,
+    manual_lot_id: Option<i64>,
     qty: i64,
     capture: Option<Proposal>,
     task: Task<CaptureResult>,
@@ -81,6 +82,17 @@ pub struct IssuePage {
 }
 
 impl IssuePage {
+    fn select_candidate(&mut self, id: i64) {
+        let allowed = self
+            .capture
+            .as_ref()
+            .is_some_and(|p| p.manufacture_candidate_ids.is_empty() || p.manufacture_candidate_ids.contains(&id));
+        if allowed && self.lots.iter().any(|l| l.id == id && Some(l.item_id) == self.item_id && l.drawable()) {
+            self.lot_id = Some(id);
+            self.manual_lot_id = Some(id);
+        }
+    }
+
     fn folder_source(&self) -> bool {
         self.camera.enabled && self.camera.transport == "folder" && self.camera.configured()
     }
@@ -168,6 +180,8 @@ impl IssuePage {
                 if let Some(id) = p.item_id {
                     let locked = p.locked_lot.as_ref().map(|l| l.lot_id);
                     self.reload_lots(shared, id, locked);
+                    self.lot_id = locked;
+                    self.manual_lot_id = None;
                 }
                 self.stage = if p.item_id.is_some() { Stage::Verdict } else { Stage::Manual };
                 self.capture = Some(p);
@@ -186,6 +200,7 @@ impl IssuePage {
         self.item_id = None;
         self.lots.clear();
         self.lot_id = None;
+        self.manual_lot_id = None;
         self.machine = None;
         self.product = None;
         self.steps.clear();
@@ -231,6 +246,8 @@ impl IssuePage {
                             self.item_id = Some(id);
                             let locked = proposal.locked_lot.as_ref().map(|l| l.lot_id);
                             self.reload_lots(shared, id, locked);
+                            self.lot_id = locked;
+                            self.manual_lot_id = None;
                             self.stage = Stage::Verdict;
                         }
                     }
@@ -490,10 +507,25 @@ impl IssuePage {
     /// out? Colour and heading carry it alone, because it gets read from a few
     /// steps away before anyone leans in.
     fn verdict(&mut self, ui: &mut Ui, shared: &mut Shared) {
-        let Some(p) = self.capture.clone() else {
+        let Some(mut p) = self.capture.clone() else {
             self.stage = Stage::Manual;
             return;
         };
+        let selectable = p.locked_lot.is_none();
+        if let Some(lot) = self.lots.iter().find(|l| Some(l.id) == self.manual_lot_id) {
+            p.locked_lot = Some(service::LockedLot {
+                lot_id: lot.id,
+                receipt_date: lot.receipt_date.clone(),
+                manufacture_date: lot.manufacture_date.clone(),
+                qty_on_hand: lot.qty_on_hand,
+            });
+            p.fifo_ok = Some(lot.is_fifo_next || lot.fifo_also_ok);
+            p.fifo_expected_date = self
+                .lots
+                .iter()
+                .find(|l| l.is_fifo_next)
+                .map(|l| l.manufacture_date.clone().unwrap_or_else(|| l.receipt_date.clone()));
+        }
         let fifo_lot = self.lots.iter().find(|l| l.is_fifo_next).cloned();
         // Three states, genuinely different: fine / wrong box / could not tell
         // which box. Collapsing the last two would tell someone to swap a box
@@ -566,11 +598,17 @@ impl IssuePage {
             }
         });
         ui.add_space(12.0);
+        if self.manual_lot_id.is_some()
+            && let Some(original) = &self.capture
+        {
+            alert(ui, Kind::Info, "已人工選定批次", &original.match_explanation());
+        }
         self.photo_card(ui, shared, &p, 360.0);
         ui.add_space(12.0);
 
         // Every lot's 製造日 laid out, so the operator sees where the box in
         // hand sits — "take that one" means more when you can see them all.
+        let mut selected_candidate = None;
         if !self.lots.is_empty() {
             titled_card(
                 ui,
@@ -581,8 +619,9 @@ impl IssuePage {
                         p.manufacture_candidate_ids.is_empty() || p.manufacture_candidate_ids.contains(&l.id)
                     }) {
                         let this = p.locked_lot.as_ref().is_some_and(|l| l.lot_id == lot.id);
-                        row_frame(this).show(ui, |ui| {
+                        let row = row_frame(this).show(ui, |ui| {
                             ui.set_width(ui.available_width());
+                            ui.set_min_height(TOUCH);
                             ui.horizontal(|ui| {
                                 ui.label(
                                     RichText::new(format!(
@@ -592,7 +631,15 @@ impl IssuePage {
                                     .font(bold_font(17.0)),
                                 );
                                 if this {
-                                    tag(ui, "你手上這箱", PRIMARY);
+                                    tag(
+                                        ui,
+                                        if self.manual_lot_id.is_some() {
+                                            "已人工選定"
+                                        } else {
+                                            "你手上這箱"
+                                        },
+                                        PRIMARY,
+                                    );
                                 }
                                 if lot.is_fifo_next {
                                     tag(ui, "FIFO 應領", OK);
@@ -602,12 +649,21 @@ impl IssuePage {
                                 }
                                 ui.label(muted(format!("進貨 {}", lot.receipt_date)));
                                 ui.label(muted(format!("在庫 {} 箱", lot.qty_on_hand)));
+                                if selectable && ui.button(if this { "已選定" } else { "選這批" }).clicked() {
+                                    selected_candidate = Some(lot.id);
+                                }
                             });
                         });
+                        if selectable && row.response.interact(egui::Sense::click()).clicked() {
+                            selected_candidate = Some(lot.id);
+                        }
                     }
                 },
             );
             ui.add_space(8.0);
+        }
+        if let Some(id) = selected_candidate {
+            self.select_candidate(id);
         }
         ui.horizontal(|ui| {
             let wrong = p.locked_lot.is_some() && p.fifo_ok == Some(false);
@@ -769,7 +825,7 @@ impl IssuePage {
             ui.add_space(10.0);
         }
 
-        let picking = self.stage == Stage::Manual || p.as_ref().is_none_or(|p| p.locked_lot.is_none());
+        let picking = self.stage == Stage::Manual || p.is_none();
         let fifo_lot = self.lots.iter().find(|l| l.is_fifo_next).cloned();
         if picking {
             Frame::new()
@@ -1105,4 +1161,104 @@ fn pick_image() -> Option<PathBuf> {
     let dir = std::env::var("URDWMS_PICK").ok()?;
     let config = CameraConfig { transport: "folder".into(), folder: dir, ..Default::default() };
     camera::newest_image(&config).ok().map(|(p, _)| p)
+}
+
+#[cfg(test)]
+mod candidate_tests {
+    use super::*;
+    #[test]
+    fn verdict_candidate_row_accepts_real_pointer_clicks() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut shared = Shared {
+            store: Store::open(dir.path()).unwrap(),
+            data_dir: dir.path().to_owned(),
+            toasts: vec![],
+            nav: None,
+            images: Default::default(),
+            generation: 0,
+        };
+        let mut page = IssuePage {
+            stage: Stage::Verdict,
+            item_id: Some(7),
+            capture: Some(Proposal { manufacture_candidate_ids: vec![11, 12], ..Default::default() }),
+            lots: vec![
+                Lot { id: 11, item_id: 7, receipt_date: "2026-06-09".into(), qty_on_hand: 2, ..Default::default() },
+                Lot { id: 12, item_id: 7, receipt_date: "2026-07-07".into(), qty_on_hand: 20, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        super::super::theme::install_fonts(&ctx);
+        let frame = |page: &mut IssuePage, shared: &mut Shared, events| {
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1400.0, 1200.0))),
+                    events,
+                    ..Default::default()
+                },
+                |ui| page.verdict(ui, shared),
+            );
+            output.textures_delta.clear();
+            output
+        };
+        fn position(shape: &egui::Shape, label: &str) -> Option<egui::Pos2> {
+            match shape {
+                egui::Shape::Text(t) if t.galley.text() == label => Some(t.pos + t.galley.size() / 2.0),
+                egui::Shape::Vec(v) => v.iter().find_map(|s| position(s, label)),
+                _ => None,
+            }
+        }
+        frame(&mut page, &mut shared, vec![]);
+        let output = frame(&mut page, &mut shared, vec![]);
+        let pos =
+            output.shapes.iter().find_map(|s| position(&s.shape, "進貨 2026-07-07")).expect("candidate row visible");
+        for pressed in [true, false] {
+            frame(
+                &mut page,
+                &mut shared,
+                vec![
+                    egui::Event::PointerMoved(pos),
+                    egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    },
+                ],
+            );
+        }
+        assert_eq!(page.lot_id, Some(12));
+        assert_eq!(page.manual_lot_id, Some(12));
+        assert_eq!(page.stage, Stage::Verdict);
+        assert_eq!(page.lots[1].qty_on_hand, 20);
+    }
+
+    #[test]
+    fn choosing_same_date_candidate_preserves_photo_and_does_not_issue_stock() {
+        let mut page = IssuePage {
+            stage: Stage::Verdict,
+            item_id: Some(7),
+            capture: Some(Proposal {
+                manufacture_candidate_ids: vec![11, 12],
+                image_path: Some("photo.jpg".into()),
+                ..Default::default()
+            }),
+            lots: vec![
+                Lot { id: 11, item_id: 7, qty_on_hand: 2, ..Default::default() },
+                Lot { id: 12, item_id: 7, qty_on_hand: 20, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        page.select_candidate(12);
+        assert_eq!(page.lot_id, Some(12));
+        assert_eq!(page.manual_lot_id, Some(12));
+        assert_eq!(page.stage, Stage::Verdict);
+        assert_eq!(page.lots[1].qty_on_hand, 20);
+        assert!(page.outcome.is_none());
+        assert_eq!(page.capture.as_ref().unwrap().image_path.as_deref(), Some("photo.jpg"));
+        page.select_candidate(99);
+        assert_eq!(page.lot_id, Some(12));
+        page.reset();
+        assert_eq!(page.manual_lot_id, None);
+    }
 }

@@ -398,6 +398,8 @@ function IssueScreen() {
         <ScanVerdict
           capture={capture}
           lots={lots}
+          selectedLotId={lotId}
+          onSelectLot={(id) => { editingCapture.current = true; setLotId(id); }}
           onRetake={() => reset("拍照")}
           onManual={() => setStage("手動")}
         />
@@ -524,7 +526,7 @@ function IssueScreen() {
           {/* On the recognised path the lot is already decided, so the picker
               only appears when a human has to make the call — either they came
               in manually, or the stamp could not be read. */}
-          {(stage === "手動" || !capture?.locked_lot) && (
+          {stage === "手動" && (
             <Card
               title={
                 <Space size={10}>
@@ -713,16 +715,18 @@ function IssueScreen() {
  * Colour and heading carry the verdict on their own, because it gets read from
  * a few steps away before anyone leans in for the detail.
  */
-function ScanVerdict({ capture, lots, onRetake, onManual }: {
-  capture: Proposal; lots: Lot[]; onRetake: () => void; onManual: () => void;
+function ScanVerdict({ capture, lots, selectedLotId, onSelectLot, onRetake, onManual }: {
+  capture: Proposal; lots: Lot[]; selectedLotId?: number; onSelectLot: (id: number) => void; onRetake: () => void; onManual: () => void;
 }) {
-  const locked = capture.locked_lot;
+  const selected = !capture.locked_lot ? lots.find((l) => l.id === selectedLotId) : undefined;
+  const locked = capture.locked_lot ?? (selected ? { ...selected, lot_id: selected.id } : null);
+  const fifoOk = selected ? selected.is_fifo_next || selected.fifo_also_ok : capture.fifo_ok;
   const fifoLot = lots.find((l) => l.is_fifo_next) ?? null;
 
   // Three states, and they are genuinely different: this box is fine / this box
   // is the wrong one / we could not tell which box this is. Collapsing the last
   // two into "failed" would tell someone to go swap a box we never identified.
-  const state = !locked ? "unknown" : capture.fifo_ok ? "ok" : "wrong";
+  const state = !locked ? "unknown" : fifoOk ? "ok" : "wrong";
   const colour = state === "ok" ? OK : state === "wrong" ? BAD : WARN;
   const heading = state === "ok" ? "可以拿" : state === "wrong" ? "這箱先別拿" : "認得出品項，尚未鎖定批次";
   const Icon = state === "ok" ? CheckCircleFilled : state === "wrong" ? CloseCircleFilled : QuestionCircleFilled;
@@ -758,12 +762,13 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
           <div style={{ fontSize: 20, marginTop: 20, lineHeight: 1.7 }}>
             <div>你這箱：製造 {locked.manufacture_date ?? "未填"}（進貨 {locked.receipt_date}）</div>
             <div style={{ fontWeight: 700 }}>
-              該拿的是：製造 {capture.fifo_expected_date} 那批
+              該拿的是：製造 {capture.fifo_expected_date ?? fifoLot?.manufacture_date ?? fifoLot?.receipt_date} 那批
               {fifoLot && `（進貨 ${fifoLot.receipt_date}，還有 ${fifoLot.qty_on_hand} 箱）`}
             </div>
           </div>
         )}
 
+        {selected && <div style={{ marginTop: 16 }}>已人工選定批次。{capture.match_explanation}</div>}
         {state === "unknown" && (
           <div style={{ fontSize: 19, marginTop: 20, lineHeight: 1.7 }}>
             {capture.match_explanation ?? "日期無法唯一對應批次，請核對製造日與驗收章。"}
@@ -827,9 +832,14 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
             {lots.filter((lot) => !capture.manufacture_candidate_ids?.length || capture.manufacture_candidate_ids.includes(lot.id)).map((lot) => {
               const isThis = locked?.lot_id === lot.id;
               return (
-                <div
+                <button
+                  type="button"
                   key={lot.id}
+                  disabled={Boolean(capture.locked_lot)}
+                  aria-pressed={isThis}
+                  onClick={() => onSelectLot(lot.id)}
                   style={{
+                    width: "100%", textAlign: "left", color: "inherit", fontFamily: "inherit", cursor: capture.locked_lot ? "default" : "pointer", minHeight: TOUCH,
                     display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap",
                     padding: "10px 14px", borderRadius: 6, fontSize: 17,
                     border: `1px solid ${isThis ? "#1677ff" : "#f0f0f0"}`,
@@ -839,12 +849,13 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
                   <span style={{ fontWeight: 600, minWidth: 150 }}>
                     製造 {lot.manufacture_date ?? "未填"}
                   </span>
-                  {isThis && <Tag color="blue">你手上這箱</Tag>}
+                  {isThis && <Tag color="blue">{selected ? "已人工選定" : "你手上這箱"}</Tag>}
                   {lot.is_fifo_next && <Tag color="green">FIFO 應領</Tag>}
                   {lot.fifo_also_ok && <Tag>同製造日．可領</Tag>}
                   <Text type="secondary">進貨 {lot.receipt_date}</Text>
                   <Text type="secondary">在庫 {lot.qty_on_hand} 箱</Text>
-                </div>
+                  {!capture.locked_lot && <span>{isThis ? "已選定" : "選這批"}</span>}
+                </button>
               );
             })}
           </Space>
