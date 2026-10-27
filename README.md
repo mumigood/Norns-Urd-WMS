@@ -168,9 +168,18 @@ API 用 `fifo_basis` 說明目前依據哪一欄，畫面照實講「暫時改�
 
 ## 跑起來
 
-**正式版是單一 Windows 執行檔**（Rust 重寫，2026-10）：到 GitHub Releases 下載
+**桌面版是單一 Windows 執行檔**（Rust 重寫，2026-10）：到 GitHub Releases 下載
 `Urd-WMS-vX.Y.Z-windows-x64.zip`，解壓後執行 `Urd-WMS.exe`。安裝與首次設定見
 [`packaging/README.txt`](packaging/README.txt)。
+
+**網頁部署版**：下載 `Urd-WMS-vX.Y.Z-web-windows-x64.zip`，另備 Caddy 2，執行
+`Run-Web.ps1` 後開啟 `http://localhost:8080`。Windows 11 原生 Rust API + 預先建置的
+靜態網頁，部署機不需要 WSL、Node.js 或 Python。首次帳密 `admin` / `urdwms-admin`，
+登入後強制改密碼。埠、資料夾、區網與 HTTPS 設定見
+[`packaging/web/README.txt`](packaging/web/README.txt)。
+
+所有瀏覽器共用 API 主機上的資料；egui 桌面版仍是本機獨立程式，不是遠端 API 用戶端。
+網頁版預設資料夾 `%LOCALAPPDATA%\UrdWMS-Web`，與桌面版分開。
 
 | | |
 |---|---|
@@ -184,8 +193,8 @@ API 用 `fifo_basis` 說明目前依據哪一欄，畫面照實講「暫時改�
 
 ```bash
 cargo test --workspace                       # 核心規則 + 服務層測試
-cargo run -p urdwms -- --demo --data-dir /tmp/urdwms-demo
-cargo run -p urdwms -- --data-dir /tmp/urdwms-demo --screenshot /tmp/shots --as peter   # 每個畫面截圖
+cargo run -p urdwms --bin urdwms -- --demo --data-dir /tmp/urdwms-demo
+cargo run -p urdwms --bin urdwms -- --data-dir /tmp/urdwms-demo --screenshot /tmp/shots --as peter   # 每個畫面截圖
 ```
 
 | 目錄 | 內容 |
@@ -196,12 +205,15 @@ cargo run -p urdwms -- --data-dir /tmp/urdwms-demo --screenshot /tmp/shots --as 
 
 發版：`git tag v0.2.0 && git push origin v0.2.0`，Actions 會建置 Windows 版並建立 GitHub Release。
 
-### 舊版（Python + Next.js，保留作為參考）
+### 舊版 Python 與現行網頁前端
 
-`backend/`、`frontend/`、`core/`（Python）、`poc/` 是重寫前的垂直切片與辨識 PoC 工具。
+`backend/`、`core/`（Python）、`poc/` 是重寫前的垂直切片與辨識 PoC 工具。
+`frontend/` 現在靜態匯出為網頁部署版，透過同來源 Rust API 操作。
 PoC 的量測腳本（`poc/run_poc.py`）仍以 Python 執行；桌面程式不需要它們。
 
-## 狀態
+## 舊版垂直切片狀態（歷史紀錄）
+
+下表描述重寫前的 demo，非目前 Rust API 權限與功能清單。
 
 **垂直切片 demo 可跑**（US-1/2/3/4/5 核心路徑 + US-6/8 提醒）。範圍見下表。
 

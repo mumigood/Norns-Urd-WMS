@@ -5,12 +5,7 @@
 
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
-mod applog;
-mod auth;
-mod db;
-mod error;
-mod seed;
-mod service;
+use urdwms::{applog, auth, db, error, seed, service};
 mod ui;
 
 use std::path::PathBuf;

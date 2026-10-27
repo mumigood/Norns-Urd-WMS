@@ -1,5 +1,6 @@
 [package]
 name = "urdwms"
+default-run = "urdwms"
 description = "Urd-WMS desktop app: receiving, image-recognised issuing, FIFO, traceability, alerts"
 version.workspace = true
 edition.workspace = true
@@ -7,17 +8,34 @@ edition.workspace = true
 [[bin]]
 name = "urdwms"
 path = "src/main.rs"
+required-features = ["desktop"]
+
+[[bin]]
+name = "urdwms-server"
+path = "src/bin/server.rs"
+required-features = ["server"]
+
+[features]
+default = ["desktop", "server"]
+desktop = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:jiff", "dep:rfd"]
+server = ["dep:axum", "dep:tokio"]
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
+tempfile = "3"
 
 [dependencies]
+axum = { version = "0.8", features = ["multipart"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"], optional = true }
 urdwms-core = { path = "../urdwms-core" }
-eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "accesskit", "clipboard", "links", "wayland", "x11"] }
-egui = { version = "0.37", features = ["monochrome_emoji_fonts"] }
-egui_extras = { version = "0.37", default-features = false, features = ["datepicker"] }
+eframe = { optional = true, version = "0.37", default-features = false, features = ["glow", "default_fonts", "accesskit", "clipboard", "links", "wayland", "x11"] }
+egui = { optional = true, version = "0.37", features = ["monochrome_emoji_fonts"] }
+egui_extras = { optional = true, version = "0.37", default-features = false, features = ["datepicker"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
-jiff = "0.2"
+jiff = { version = "0.2", optional = true }
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 sha2 = "0.10"
 getrandom = "0.3"
@@ -25,7 +43,7 @@ hex = "0.4"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "bmp", "webp"] }
 
 [target.'cfg(windows)'.dependencies]
-rfd = "0.15"
+rfd = { version = "0.15", optional = true }
 
 
 [target.'cfg(windows)'.build-dependencies]

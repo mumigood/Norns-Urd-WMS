@@ -1,0 +1,18 @@
+{
+	# The launcher owns this process; no shared Caddy admin endpoint is needed.
+	admin off
+}
+
+{$URDWMS_WEB_ADDRESS:http://localhost:8080} {
+	bind {$URDWMS_WEB_BIND:127.0.0.1}
+	@backend path /api /api/* /uploads /uploads/*
+	handle @backend {
+		reverse_proxy 127.0.0.1:{$URDWMS_API_PORT:8071}
+	}
+
+	handle {
+		root * "{$URDWMS_WEB_ROOT:./www}"
+		encode gzip
+		file_server
+	}
+}

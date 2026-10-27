@@ -9,7 +9,7 @@ use crate::bail;
 use crate::db::{self, log, now};
 use crate::error::Res;
 
-pub(crate) fn session_for(conn: &Connection, username: &str) -> Res<Session> {
+pub fn session_for(conn: &Connection, username: &str) -> Res<Session> {
     let row = conn
         .query_row(
             "SELECT id, username, name, title, role, must_change FROM app_user WHERE username = ? AND active = 1",
@@ -62,26 +62,41 @@ pub fn refresh_session(store: &Store, user: &Session) -> Option<Session> {
 /// Change your own password. Requires the current one — otherwise a borrowed
 /// tablet becomes a permanent takeover.
 pub fn change_password(store: &Store, user: &Session, current: &str, new: &str) -> Res<()> {
+    change_password_retaining_session(store, user, current, new, None)
+}
+
+/// Retain an already authenticated HTTP session atomically; every other
+/// session is revoked. No token can be re-created after a concurrent reset.
+pub fn change_password_retaining_session(
+    store: &Store,
+    user: &Session,
+    current: &str,
+    new: &str,
+    keep_token: Option<&str>,
+) -> Res<()> {
     check_password_policy(new)?;
-    let conn = &store.conn;
-    let hash: String = conn.query_row("SELECT password_hash FROM app_user WHERE id = ?", [user.id], |r| r.get(0))?;
-    if !verify_password(current, &hash) {
-        bail!("目前密碼不正確");
-    }
     if current == new {
         bail!("新密碼不能跟目前的一樣");
     }
-    db::transaction(conn, |tx| {
+    db::transaction(&store.conn, |tx| {
+        let hash: String = tx.query_row("SELECT password_hash FROM app_user WHERE id = ?", [user.id], |r| r.get(0))?;
+        if !verify_password(current, &hash) {
+            bail!("目前密碼不正確");
+        }
         tx.execute(
             "UPDATE app_user SET password_hash = ?, must_change = 0 WHERE id = ?",
             params![hash_password(new), user.id],
+        )?;
+        tx.execute(
+            "DELETE FROM app_session WHERE user_id = ? AND (? IS NULL OR token <> ?)",
+            params![user.id, keep_token, keep_token],
         )?;
         log(tx, &user.name, "auth.password_change", json!({"user_id": user.id}))?;
         Ok(())
     })
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
 pub struct UserRow {
     pub id: i64,
     pub username: String,
@@ -130,6 +145,7 @@ pub fn signers(conn: &Connection) -> Res<Vec<(String, String)>> {
     Ok(rows)
 }
 
+#[derive(serde::Deserialize)]
 pub struct NewUser {
     pub username: String,
     pub name: String,
@@ -175,7 +191,8 @@ pub fn create_user(store: &Store, user: &Session, new: &NewUser) -> Res<i64> {
     })
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct UserPatch {
     pub name: Option<String>,
     pub title: Option<String>,
@@ -236,6 +253,9 @@ pub fn update_user(store: &Store, user: &Session, id: i64, patch: &UserPatch) ->
             &format!("UPDATE app_user SET {} WHERE id = ?", set.join(", ")),
             rusqlite::params_from_iter(values),
         )?;
+        if patch.password.is_some() || patch.active == Some(false) {
+            tx.execute("DELETE FROM app_session WHERE user_id = ?", [id])?;
+        }
         let shown: serde_json::Map<String, serde_json::Value> = changes
             .iter()
             .map(|(k, v)| {
@@ -289,6 +309,63 @@ pub fn permission_label(p: &str) -> &'static str {
 
 pub fn permission_summary(role: &str) -> String {
     auth::permissions(role).iter().map(|p| permission_label(p)).collect::<Vec<_>>().join("、")
+}
+
+#[cfg(test)]
+mod web_session_tests {
+    use super::*;
+    use crate::service::testing::*;
+    fn add_token(s: &Store, id: i64) {
+        s.conn.execute("INSERT INTO app_session(token,user_id,created_at,expires_at) VALUES ('test-token',?,'2026-01-01','2099-01-01')",[id]).unwrap();
+    }
+    fn count(s: &Store) -> i64 {
+        s.conn.query_row("SELECT COUNT(*) FROM app_session", [], |r| r.get(0)).unwrap()
+    }
+    #[test]
+    fn password_change_invalidates_browser_sessions() {
+        let s = store();
+        let admin = session(&s, "peter");
+        create_user(
+            &s,
+            &admin,
+            &NewUser {
+                username: "sessions".into(),
+                name: "sessions".into(),
+                title: None,
+                role: "user".into(),
+                password: "old-password".into(),
+            },
+        )
+        .unwrap();
+        let user = session(&s, "sessions");
+        add_token(&s, user.id);
+        change_password(&s, &user, "old-password", "new-password").unwrap();
+        assert_eq!(count(&s), 0);
+    }
+    #[test]
+    fn reset_and_disable_invalidate_browser_sessions() {
+        let s = store();
+        let admin = session(&s, "peter");
+        let id = create_user(
+            &s,
+            &admin,
+            &NewUser {
+                username: "sessions".into(),
+                name: "sessions".into(),
+                title: None,
+                role: "user".into(),
+                password: "old-password".into(),
+            },
+        )
+        .unwrap();
+        add_token(&s, id);
+        update_user(&s, &admin, id, &UserPatch { password: Some("reset-password".into()), ..Default::default() })
+            .unwrap();
+        assert_eq!(count(&s), 0);
+        add_token(&s, id);
+        update_user(&s, &admin, id, &UserPatch { active: Some(false), ..Default::default() }).unwrap();
+        assert_eq!(count(&s), 0);
+    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,7 @@
  * software.
  */
 
-import { Alert, Button, Card, Col, Form, InputNumber, Radio, Row, Space, Tabs, Typography, message } from "antd";
+import { Alert, Button, Card, Col, Form, Input, InputNumber, Popconfirm, Radio, Row, Space, Tabs, Typography, message } from "antd";
 import { useCallback, useEffect, useState } from "react";
 import CameraSettingsPanel from "@/components/CameraSettingsPanel";
 import UsersPanel from "@/components/UsersPanel";
@@ -79,6 +79,7 @@ function VisionSettings({ readOnly }: { readOnly: boolean }) {
 
   return (
     <>
+      <ApiKeySettings readOnly={readOnly} />
       <Title level={5} style={{ marginTop: 0 }}>辨識模型</Title>
       <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
         讀標籤型號與驗收章的模型。下面的秒數是拿現場實照量出來的中位值，不是估計。
@@ -165,4 +166,47 @@ function AlertSettings({ readOnly }: { readOnly: boolean }) {
       </Form>
     </>
   );
+}
+
+function ApiKeySettings({ readOnly }: { readOnly: boolean }) {
+  const [status, setStatus] = useState<{ configured: boolean; from_env: boolean }>();
+  const [key, setKey] = useState("");
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    try { setStatus(await api.apiKey()); } catch (e) { message.error((e as Error).message); }
+  }, []);
+  useEffect(() => { load(); }, [load]);
+  async function save(value: string) {
+    setBusy(true);
+    try {
+      await api.saveApiKey(value); setKey(""); await load();
+      message.success(value ? "已儲存金鑰" : "已清除金鑰");
+    } catch (e) { message.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function test() {
+    setBusy(true);
+    try {
+      const result = await api.testApiKey(key.trim() || undefined);
+      if (result.ok) message.success("辨識服務連線成功");
+      else message.error(result.error || "辨識服務連線失敗");
+    } catch (e) { message.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+  return <section style={{ marginBottom: 32 }}>
+    <Title level={5} style={{ marginTop: 0 }}>辨識服務金鑰</Title>
+    <Text type="secondary" style={{ display: "block", marginBottom: 12 }}>
+      {status ? status.from_env ? "使用伺服器環境設定的金鑰" : status.configured ? "已設定金鑰；不會顯示原值" : "尚未設定 Gemini API 金鑰" : "載入設定…"}
+    </Text>
+    {!status?.from_env && <Input.Password aria-label="Gemini API 金鑰" placeholder="貼上新的 Gemini API 金鑰"
+      value={key} onChange={e => setKey(e.target.value)} disabled={readOnly || busy || !status}
+      autoComplete="off" style={{ maxWidth: 520, display: "block", marginBottom: 12 }} />}
+    <Space wrap>
+      {!status?.from_env && <Button onClick={() => save(key.trim())} disabled={readOnly || busy || !status || !key.trim()}>儲存金鑰</Button>}
+      <Button onClick={test} loading={busy} disabled={readOnly || !status || (!key.trim() && !status.configured)}>測試連線</Button>
+      {!status?.from_env && status?.configured && <Popconfirm title="清除已儲存的金鑰？" onConfirm={() => save("")} okText="清除" cancelText="取消">
+        <Button danger disabled={readOnly || busy}>清除金鑰</Button>
+      </Popconfirm>}
+    </Space>
+  </section>;
 }

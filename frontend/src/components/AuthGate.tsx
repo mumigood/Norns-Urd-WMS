@@ -52,6 +52,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  useEffect(() => {
+    const expired = () => { setUser(null); setChanging(false); pwForm.resetFields(); };
+    window.addEventListener("urdwms:unauthenticated", expired);
+    return () => window.removeEventListener("urdwms:unauthenticated", expired);
+  }, [pwForm]);
+
   async function submit() {
     const values = await form.validateFields().catch(() => null);
     if (!values) return;
@@ -79,12 +85,8 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     setBusy(true);
     try {
       await api.changePassword(values.current_password, values.new_password);
-      message.success("密碼已更改，請重新登入");
-      // The server drops every session for this account on a password change,
-      // including this one — so send the user back to the login form rather
-      // than leaving them holding a token that no longer works.
-      tokenStore.clear();
-      setUser(null);
+      setUser(await api.me());
+      message.success("密碼已更改");
       setChanging(false);
       pwForm.resetFields();
     } catch (e) {
@@ -138,7 +140,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         openPasswordChange: () => setChanging(true),
       }}
     >
-      {children}
+      {!user.must_change && children}
       <Modal
         open={changing}
         title="更改密碼"
@@ -148,6 +150,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         confirmLoading={busy}
         // A forced change has no way out: cancelling would leave the account on
         // a password its creator knows.
+        keyboard={!user.must_change}
         closable={!user.must_change}
         mask={{ closable: !user.must_change }}
         cancelButtonProps={{ style: user.must_change ? { display: "none" } : undefined }}

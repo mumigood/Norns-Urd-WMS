@@ -1,5 +1,7 @@
 "use client";
 
+import AuthenticatedImage from "@/components/AuthenticatedImage";
+
 /**
  * 領用登錄 — photo first.
  *
@@ -434,7 +436,7 @@ function IssueScreen() {
                     )}
                   </Space>
                   {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <AuthenticatedImage
                     src={capture.image_path}
                     alt="剛拍的箱子"
                     style={{
@@ -777,7 +779,7 @@ function ScanVerdict({ capture, lots, onRetake, onManual }: {
             {capture.source_name && <Text type="secondary">{capture.source_name}</Text>}
           </Space>
           {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
+          <AuthenticatedImage
             src={capture.image_path}
             alt="剛拍的箱子"
             style={{

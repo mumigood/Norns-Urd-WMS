@@ -17,7 +17,7 @@ use crate::error::Res;
 pub const PASS: &str = "合格";
 pub const FAIL: &str = "不合格";
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, Default, PartialEq)]
 pub struct Lot {
     pub id: i64,
     pub item_id: i64,
@@ -189,7 +189,8 @@ pub fn lots(conn: &Connection, item_id: Option<i64>) -> Res<Vec<Lot>> {
 /// `item_name` (required) and `model` (optional), because receiving is where
 /// an item first appears and the warehouse should not be sent to a separate
 /// master-data screen first.
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct LotInput {
     pub item_id: Option<i64>,
     pub receipt_date: String,
@@ -216,7 +217,7 @@ pub struct LotInput {
     pub remark: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
 pub struct LotCreated {
     pub id: i64,
     pub item_id: i64,
@@ -404,8 +405,10 @@ pub fn create_lot(store: &Store, user: &Session, input: &LotInput) -> Res<LotCre
 
 /// Admin correction of a receiving line. Every field here is something a
 /// person can mistype off the paper form.
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct LotPatch {
+    pub supplier_lot_code: Option<String>,
     pub receipt_date: Option<String>,
     pub manufacture_date: Option<String>,
     pub expiry_date: Option<String>,
@@ -432,6 +435,9 @@ pub fn update_lot(store: &Store, user: &Session, id: i64, patch: &LotPatch) -> R
         if raw.is_some() {
             changes.push((field, clean_date(raw, label)?.map_or(Value::Null, Value::String)));
         }
+    }
+    if let Some(s) = &patch.supplier_lot_code {
+        changes.push(("supplier_lot_code", opt_trim(&Some(s.clone())).map_or(Value::Null, Value::String)));
     }
     if let Some(s) = &patch.supplier {
         changes.push(("supplier", opt_trim(&Some(s.clone())).map_or(Value::Null, Value::String)));
@@ -465,18 +471,18 @@ pub fn update_lot(store: &Store, user: &Session, id: i64, patch: &LotPatch) -> R
     db::transaction(conn, |tx| {
         let before: Option<Map<String, Value>> = tx
             .query_row(
-                "SELECT receipt_date, manufacture_date, expiry_date, supplier, remark, verdict, qty_on_hand
+                "SELECT receipt_date, manufacture_date, expiry_date, supplier, remark, verdict, supplier_lot_code, qty_on_hand
                  FROM inventory_lot WHERE id = ?",
                 [id],
                 |r| {
                     let mut m = Map::new();
-                    for (i, k) in ["receipt_date", "manufacture_date", "expiry_date", "supplier", "remark", "verdict"]
+                    for (i, k) in ["receipt_date", "manufacture_date", "expiry_date", "supplier", "remark", "verdict", "supplier_lot_code"]
                         .iter()
                         .enumerate()
                     {
                         m.insert(k.to_string(), r.get::<_, Option<String>>(i)?.map_or(Value::Null, Value::String));
                     }
-                    m.insert("qty_on_hand".into(), json!(r.get::<_, i64>(6)?));
+                    m.insert("qty_on_hand".into(), json!(r.get::<_, i64>(7)?));
                     Ok(m)
                 },
             )

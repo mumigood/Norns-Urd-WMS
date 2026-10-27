@@ -27,7 +27,34 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      - run: cargo build --release -p urdwms
+      - run: cargo build --release -p urdwms --bin urdwms
+      - run: cargo build --release -p urdwms --no-default-features --features server --bin urdwms-server
+      - name: Validate deployment script syntax
+        shell: powershell
+        run: |
+          Get-ChildItem packaging -Filter *.ps1 -Recurse | ForEach-Object {
+            $parseErrors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Smoke headless API on Windows
+        shell: pwsh
+        run: ./packaging/Smoke-Api.ps1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm test
+        working-directory: frontend
+      - run: pnpm build
+        working-directory: frontend
       - name: Package
         shell: pwsh
         run: |
@@ -39,6 +66,15 @@ jobs:
           Copy-Item crates/urdwms/assets/fonts/OFL.txt "$dir/LICENSE-font-NotoSansTC-OFL.txt"
           Compress-Archive -Path $dir -DestinationPath "$dir.zip"
           (Get-FileHash "$dir.zip" -Algorithm SHA256).Hash.ToLower() + "  $dir.zip" | Out-File -Encoding ascii "$dir.zip.sha256"
+          if (!(Test-Path frontend/out/index.html)) { throw 'Static export missing index.html' }
+          $webDir = "Urd-WMS-$tag-web-windows-x64"
+          New-Item -ItemType Directory $webDir | Out-Null
+          Copy-Item packaging/web/* "$webDir/" -Recurse
+          Copy-Item target/release/urdwms-server.exe "$webDir/"
+          Copy-Item frontend/out "$webDir/www" -Recurse
+          Compress-Archive -Path $webDir -DestinationPath "$webDir.zip"
+          (Get-FileHash "$webDir.zip" -Algorithm SHA256).Hash.ToLower() + "  $webDir.zip" | Out-File -Encoding ascii "$webDir.zip.sha256"
+          "WEB_ZIP=$webDir.zip" >> $env:GITHUB_ENV
           "ZIP=$dir.zip" >> $env:GITHUB_ENV
           "TAG=$tag" >> $env:GITHUB_ENV
       - name: Publish
@@ -46,10 +82,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $notes = "Windows 10/11 x64 單一執行檔。解壓後執行 Urd-WMS.exe，第一次啟動會建立資料庫（%LOCALAPPDATA%\UrdWMS）。詳見壓縮檔內 README.txt。"
+          $notes = "Windows 10/11 x64 單一執行檔。解壓後執行 Urd-WMS.exe，第一次啟動會建立資料庫（%LOCALAPPDATA%\UrdWMS）。另附 web-windows-x64 網頁部署包（Rust API + 靜態網頁，Caddy 需另備）。兩種模式詳見各壓縮檔內 README.txt。"
           gh release view $env:TAG 2>$null
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $env:TAG $env:ZIP "$env:ZIP.sha256" --clobber
+            gh release upload $env:TAG $env:ZIP "$env:ZIP.sha256" $env:WEB_ZIP "$env:WEB_ZIP.sha256" --clobber
           } else {
-            gh release create $env:TAG $env:ZIP "$env:ZIP.sha256" --title "Urd-WMS $env:TAG" --notes $notes
+            gh release create $env:TAG $env:ZIP "$env:ZIP.sha256" $env:WEB_ZIP "$env:WEB_ZIP.sha256" --title "Urd-WMS $env:TAG" --notes $notes
           }

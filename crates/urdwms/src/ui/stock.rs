@@ -63,6 +63,7 @@ impl LotEdit {
         let differs = |a: &Option<String>, b: &Option<String>| a != b;
         let qty: i64 = self.qty_on_hand.trim().parse().map_err(|_| "在庫數量請填整數".to_string())?;
         Ok(LotPatch {
+            supplier_lot_code: None,
             receipt_date: differs(&self.receipt_date, &Some(l.receipt_date.clone()))
                 .then(|| self.receipt_date.clone().unwrap_or_default()),
             manufacture_date: differs(&self.manufacture_date, &l.manufacture_date)

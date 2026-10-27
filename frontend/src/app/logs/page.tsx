@@ -21,6 +21,7 @@ const { Title, Text } = Typography;
 
 const ACTION_LABELS: Record<string, string> = {
   "auth.login": "登入",
+  "auth.logout": "登出",
   "auth.password_change": "更改密碼",
   "lot.create": "收貨建批",
   "lot.update": "批次修正",
@@ -38,6 +39,13 @@ const ACTION_LABELS: Record<string, string> = {
   "scan.blocked_fifo": "非 FIFO 擋下",
   "scan.blocked_unreadable": "待人工補批次",
   "scan.overridden": "覆核放行",
+  "scan.detail": "補登明細",
+  "item.reorder": "型號排序",
+  "dictionary.delete": "選項刪除",
+  "camera.configure": "影像來源設定",
+  "setting.recognition": "辨識模型設定",
+  "setting.api_key": "辨識金鑰設定",
+  "setting.alerts": "提醒門檻設定",
   "seed.run": "初始資料",
 };
 
@@ -50,6 +58,8 @@ const GROUPS: { value: string; label: string }[] = [
   { value: "user", label: "人員" },
   { value: "dictionary", label: "選項" },
   { value: "role", label: "角色" },
+  { value: "setting", label: "設定" },
+  { value: "camera", label: "影像來源" },
 ];
 
 export default function LogsPage() {
@@ -101,7 +111,7 @@ export default function LogsPage() {
             style={{ width: 320 }}
             onChange={(e) => setKeyword(e.target.value)}
           />
-          <Text type="secondary">{filtered.length} 筆</Text>
+          <Text type="secondary">{filtered.length} 筆（最多載入最近 5,000 筆）</Text>
         </Space>
 
         <Table

@@ -1,12 +1,9 @@
 import type { NextConfig } from "next";
 
+// Caddy serves out/ and proxies /api and /uploads to the Rust API.
 const config: NextConfig = {
-  async rewrites() {
-    return [
-      { source: "/api/:path*", destination: "http://127.0.0.1:8071/api/:path*" },
-      { source: "/uploads/:path*", destination: "http://127.0.0.1:8071/uploads/:path*" },
-    ];
-  },
+  output: "export",
+  trailingSlash: true,
 };
 
 export default config;

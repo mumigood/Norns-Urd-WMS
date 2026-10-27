@@ -23,7 +23,8 @@ pub fn fifo_verdict(candidates: &[Candidate], lot_id: &str) -> (bool, Option<Str
     (expected.iter().any(|e| e == lot_id), Some(date))
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct ScanInput {
     pub item_id: i64,
     pub lot_id: Option<i64>,
@@ -39,7 +40,7 @@ pub struct ScanInput {
     pub detail_pending: bool,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
 pub struct ScanOutcome {
     pub id: i64,
     /// `posted` | `blocked_fifo` | `blocked_unreadable`
@@ -97,6 +98,19 @@ pub fn create_scan(store: &Store, user: &Session, input: &ScanInput) -> Res<Scan
             log(tx, &user.name, "scan.blocked_unreadable", json!({"scan_id": id}))?;
             return Ok(ScanOutcome { id, status: "blocked_unreadable", fifo_expected_date: None });
         };
+        let owner: Option<i64> =
+            tx.query_row("SELECT item_id FROM inventory_lot WHERE id = ?", [lot_id], |r| r.get(0)).optional()?;
+        if owner != Some(input.item_id) {
+            bail!("批次不屬於這個品項");
+        }
+        let rejected: bool = tx.query_row(
+            "SELECT COALESCE(verdict, '合格') = '不合格' FROM inventory_lot WHERE id = ?",
+            [lot_id],
+            |r| r.get(0),
+        )?;
+        if rejected {
+            bail!("不合格批次不能領用");
+        }
         if input.qty < 1 {
             bail!("領用數量至少 1 箱");
         }
@@ -136,7 +150,7 @@ pub fn create_scan(store: &Store, user: &Session, input: &ScanInput) -> Res<Scan
     })
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, Default, PartialEq)]
 pub struct Scan {
     pub id: i64,
     pub item_id: Option<i64>,
@@ -202,15 +216,21 @@ impl Scan {
 /// ones, not filed away as errors — the system can block the books but not
 /// the physical box (risk R3), so they belong in traceability too.
 pub fn scans(conn: &Connection, lot_id: Option<i64>, limit: i64) -> Res<Vec<Scan>> {
+    scans_filtered(conn, lot_id, None, limit)
+}
+
+/// Apply status before LIMIT so filtered history stays bounded.
+pub fn scans_filtered(conn: &Connection, lot_id: Option<i64>, status: Option<&str>, limit: i64) -> Res<Vec<Scan>> {
     let mut stmt = conn.prepare(
         "SELECT s.*, l.receipt_date, l.manufacture_date, i.name AS item_name, i.model AS item_model
          FROM material_usage_scan s
          LEFT JOIN inventory_lot l ON l.id = s.lot_id
          LEFT JOIN inventory_item i ON i.id = s.item_id
          WHERE (?1 IS NULL OR s.lot_id = ?1)
-         ORDER BY s.id DESC LIMIT ?2",
+         AND (?2 IS NULL OR s.status = ?2)
+         ORDER BY s.id DESC LIMIT ?3",
     )?;
-    let rows = stmt.query_map(params![lot_id, limit], Scan::from_row)?.collect::<Result<Vec<_>, _>>()?;
+    let rows = stmt.query_map(params![lot_id, status, limit], Scan::from_row)?.collect::<Result<Vec<_>, _>>()?;
     Ok(rows)
 }
 
@@ -243,8 +263,14 @@ pub fn override_scan(store: &Store, user: &Session, scan_id: i64, reason: &str) 
         if status != "blocked_fifo" {
             bail!("只有非 FIFO 的紀錄可覆核，目前為「{}」", status_label(&status));
         }
-        let on_hand: i64 =
-            tx.query_row("SELECT qty_on_hand FROM inventory_lot WHERE id = ?", [lot_id], |r| r.get(0))?;
+        let (on_hand, rejected): (i64, bool) = tx.query_row(
+            "SELECT qty_on_hand, COALESCE(verdict, '合格') = '不合格' FROM inventory_lot WHERE id = ?",
+            [lot_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if rejected {
+            bail!("不合格批次不能覆核領用");
+        }
         if on_hand < qty {
             bail!("這批現在只剩 {on_hand} 箱，不夠放行 {qty} 箱。請先確認實際數量。");
         }
@@ -284,7 +310,7 @@ pub fn update_scan_detail(store: &Store, user: &Session, scan_id: i64, fields: &
     })
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
 pub struct AuditEntry {
     pub id: i64,
     pub at: String,
@@ -365,6 +391,45 @@ mod tests {
         (id, lots(&s.conn, Some(id)).unwrap())
     }
 
+    #[test]
+    fn rejected_lot_cannot_be_issued() {
+        let s = store();
+        let op = session(&s, "operator");
+        let lot = lots(&s.conn, None).unwrap().into_iter().find(|l| l.rejected()).unwrap();
+        let before = lot.qty_on_hand;
+        assert!(
+            create_scan(
+                &s,
+                &op,
+                &ScanInput { item_id: lot.item_id, lot_id: Some(lot.id), qty: 1, ..Default::default() }
+            )
+            .is_err()
+        );
+        let after = lots(&s.conn, Some(lot.item_id)).unwrap().into_iter().find(|l| l.id == lot.id).unwrap();
+        assert_eq!(after.qty_on_hand, before);
+    }
+    #[test]
+    fn lot_rejected_after_block_cannot_be_overridden() {
+        let s = store();
+        let op = session(&s, "operator");
+        let admin = session(&s, "peter");
+        let (item, rows) = film(&s);
+        let newest = rows.iter().max_by_key(|l| l.manufacture_date.clone()).unwrap();
+        let scan =
+            create_scan(&s, &op, &ScanInput { item_id: item, lot_id: Some(newest.id), qty: 1, ..Default::default() })
+                .unwrap();
+        assert_eq!(scan.status, "blocked_fifo");
+        super::super::update_lot(
+            &s,
+            &admin,
+            newest.id,
+            &super::super::LotPatch { verdict: Some("不合格".into()), ..Default::default() },
+        )
+        .unwrap();
+        assert!(override_scan(&s, &admin, scan.id, "urgent").is_err());
+        let after = lots(&s.conn, Some(item)).unwrap().into_iter().find(|l| l.id == newest.id).unwrap();
+        assert_eq!(after.qty_on_hand, newest.qty_on_hand);
+    }
     #[test]
     fn the_fifo_lot_posts_and_deducts_in_one_go() {
         let s = store();

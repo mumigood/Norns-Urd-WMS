@@ -29,6 +29,8 @@ jobs:
       - run: cargo fmt --all --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      - run: cargo clippy -p urdwms --no-default-features --features server --all-targets -- -D warnings
+      - run: cargo test -p urdwms --no-default-features --features server
 
   windows:
     name: build · test (Windows)
@@ -38,7 +40,47 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo test --workspace
-      - run: cargo build --release -p urdwms
+      - run: cargo build --release -p urdwms --bin urdwms
+      - run: cargo build --release -p urdwms --no-default-features --features server --bin urdwms-server
+      - name: Validate deployment script syntax
+        shell: powershell
+        run: |
+          Get-ChildItem packaging -Filter *.ps1 -Recurse | ForEach-Object {
+            $parseErrors = $null
+            $tokens = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$tokens, [ref]$parseErrors) | Out-Null
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Smoke headless API on Windows
+        shell: pwsh
+        run: ./packaging/Smoke-Api.ps1
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+        working-directory: frontend
+      - run: pnpm test
+        working-directory: frontend
+      - run: pnpm build
+        working-directory: frontend
+      - name: Assemble static web deployment
+        shell: pwsh
+        run: |
+          if (!(Test-Path frontend/out/index.html)) { throw 'Static export missing index.html' }
+          New-Item -ItemType Directory web-package | Out-Null
+          Copy-Item packaging/web/* web-package/ -Recurse
+          Copy-Item target/release/urdwms-server.exe web-package/
+          Copy-Item frontend/out web-package/www -Recurse
+      - uses: actions/upload-artifact@v4
+        with:
+          name: urdwms-web-windows-${{ github.sha }}
+          path: web-package/
+          retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
           name: urdwms-windows-${{ github.sha }}

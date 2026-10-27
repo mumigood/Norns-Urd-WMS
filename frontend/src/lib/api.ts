@@ -250,7 +250,7 @@ export class StaleImage extends Error {
   }
 }
 
-async function req<T>(path: string, init?: RequestInit): Promise<T> {
+async function authenticatedFetch(path: string, init?: RequestInit): Promise<Response> {
   const auth = token.get();
   const res = await fetch(path, {
     cache: "no-store",
@@ -264,6 +264,7 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.json().catch(() => ({ detail: res.statusText }));
     if (res.status === 401) {
       token.clear();
+      window.dispatchEvent(new Event("urdwms:unauthenticated"));
       throw new Unauthenticated(body.detail ?? "請先登入");
     }
     if (res.status === 409 && body.detail?.code === "stale") {
@@ -276,7 +277,19 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
     // detail 可能是 dict（結構化錯誤），直接塞給 Error 會變成 [object Object]
     throw new Error(typeof body.detail === "string" ? body.detail : "請求失敗");
   }
-  return res.json();
+  return res;
+}
+
+async function req<T>(path: string, init?: RequestInit): Promise<T> {
+  return (await authenticatedFetch(path, init)).json();
+}
+
+/** Keep session credentials on the same-origin, protected upload route. */
+export async function authenticatedImage(path: string, signal?: AbortSignal): Promise<Blob> {
+  if (!/^\/uploads\/[a-zA-Z0-9_./-]+$/.test(path) || path.split("/").includes("..")) {
+    throw new Error("影像路徑無效");
+  }
+  return (await authenticatedFetch(path, { signal })).blob();
 }
 
 const json = (body: unknown): RequestInit => ({
@@ -371,9 +384,20 @@ export const api = {
     req<Partial<Proposal>>("/api/resolve-item", json({ item_id: itemId, ocr_receipt_date: ocrReceiptDate })),
   createScan: (body: Record<string, unknown>) =>
     req<{ id: number; status: Scan["status"]; fifo_expected_date?: string }>("/api/scans", json(body)),
-  scans: (status?: string) => req<Scan[]>(`/api/scans${status ? `?status=${status}` : ""}`),
+  scans: (status?: string) => req<Scan[]>(`/api/scans?limit=5000${status ? `&status=${encodeURIComponent(status)}` : ""}`),
   override: (id: number, reason: string) =>
     req<{ id: number; status: string }>(`/api/scans/${id}/override`, json({ reason })),
+  patchScanDetail: (id: number, field_values: Record<string, string>) =>
+    req<{ ok: boolean }>(`/api/scans/${id}/detail`, {
+      method: "PATCH", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ field_values }),
+    }),
+  apiKey: () => req<{ configured: boolean; from_env: boolean }>("/api/settings/api-key"),
+  saveApiKey: (key: string) => req<{ ok: boolean }>("/api/settings/api-key", {
+    ...json({ key }), method: "PUT",
+  }),
+  testApiKey: (key?: string) => req<{ ok: boolean; model?: string; error?: string }>(
+    "/api/settings/api-key/test", json(key ? { key } : {})),
   alerts: () => req<Alerts>("/api/alerts"),
   itemOptions: () => req<{ supplier: string[]; material_name: string[]; spec: string[] }>("/api/item-options"),
   roles: () => req<{ code: string; label: string; default_label: string; permissions: string[] }[]>("/api/roles"),
@@ -397,7 +421,7 @@ export const api = {
   deleteLot: (id: number) =>
     req<{ id: number; deleted: boolean }>(`/api/lots/${id}`, { method: "DELETE" }),
   audit: (action?: string) =>
-    req<AuditEntry[]>(`/api/audit${action ? `?action=${action}` : ""}`),
+    req<AuditEntry[]>(`/api/audit?limit=5000${action ? `&action=${encodeURIComponent(action)}` : ""}`),
   dictionary: (includeInactive = false) =>
     req<Dictionary>(`/api/dictionary${includeInactive ? "?include_inactive=true" : ""}`),
   addDictEntry: (category: string, value: string) =>

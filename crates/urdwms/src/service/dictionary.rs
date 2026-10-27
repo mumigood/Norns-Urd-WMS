@@ -23,7 +23,7 @@ pub const CATEGORIES: &[(&str, &str)] = &[
     ("override_reason", "非 FIFO 覆核原因"),
 ];
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, PartialEq)]
 pub struct DictEntry {
     pub id: i64,
     pub category: String,

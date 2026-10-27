@@ -9,7 +9,7 @@ use crate::bail;
 use crate::db::{self, log};
 use crate::error::Res;
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, Default, PartialEq)]
 pub struct Item {
     pub id: i64,
     /// 原物料名稱. 必填 — 型號 is optional (the form's 脫氧劑 line has none).
@@ -117,7 +117,8 @@ pub fn items(conn: &Connection, order: ItemOrder) -> Res<Vec<Item>> {
 }
 
 /// Fields for creating or editing an item. `None` means "not given".
-#[derive(Debug, Clone, Default)]
+#[derive(serde::Deserialize, Debug, Clone, Default)]
+#[serde(default)]
 pub struct ItemInput {
     pub name: Option<String>,
     pub model: Option<String>,
@@ -323,7 +324,7 @@ pub fn reorder_items(store: &Store, user: &Session, ids: &[i64]) -> Res<()> {
     })
 }
 
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(serde::Serialize, Debug, Clone, Default, PartialEq)]
 pub struct ItemOptions {
     pub supplier: Vec<String>,
     pub material_name: Vec<String>,

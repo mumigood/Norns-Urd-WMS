@@ -1,5 +1,8 @@
 "use client";
 
+import { useAuth } from "@/components/AuthGate";
+import AuthenticatedImage from "@/components/AuthenticatedImage";
+
 /**
  * Records and traceability.
  *
@@ -27,6 +30,9 @@ const STATUS: Record<Scan["status"], { color: string; label: string }> = {
 
 
 export default function RecordsPage() {
+  const { can } = useAuth();
+  const [detail, setDetail] = useState<Scan | null>(null);
+  const [detailForm] = Form.useForm();
   const [rows, setRows] = useState<Scan[]>([]);
   const [dict, setDict] = useState<Dictionary | null>(null);
   const reasons = (dict?.entries.override_reason ?? []).map((e) => e.value);
@@ -65,20 +71,32 @@ export default function RecordsPage() {
     }
   }
 
+  async function saveDetail() {
+    const values = await detailForm.validateFields().catch(() => null);
+    if (!values || !detail) return;
+    setBusy(true);
+    try {
+      await api.patchScanDetail(detail.id, Object.fromEntries(Object.entries(values).map(([k,v]) => [k, String(v ?? "").trim()])));
+      setDetail(null); message.success("已儲存領用明細"); await load();
+    } catch (e) { message.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
   const blocked = rows.filter((r) => r.status === "blocked_fifo").length;
   const pending = rows.filter((r) => r.detail_pending && ["posted", "overridden"].includes(r.status)).length;
 
   const usageTab = (
     <>
         <Space size={24} style={{ marginBottom: 16 }}>
-          <Text>共 {rows.length} 筆</Text>
+          <Text>共 {rows.length} 筆（最多載入最近 5,000 筆）</Text>
           {blocked > 0 && <Text type="danger">{blocked} 筆非 FIFO 待覆核</Text>}
           {pending > 0 && <Text type="warning">{pending} 筆產品名稱待補</Text>}
         </Space>
         <Table
           rowKey="id"
           dataSource={rows}
-          pagination={false}
+          pagination={{ pageSize: 25, showSizeChanger: true }}
+          scroll={{ x: 1100 }}
           size="middle"
           locale={{ emptyText: <Empty description="尚無領用紀錄" image={Empty.PRESENTED_IMAGE_SIMPLE} /> }}
           expandable={{
@@ -101,7 +119,7 @@ export default function RecordsPage() {
                 {row.image_path && (
                   <Descriptions.Item label="影像" span={2}>
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={row.image_path} alt="領用影像" style={{ maxWidth: 320, borderRadius: 6 }} />
+                    <AuthenticatedImage src={row.image_path} alt="領用影像" style={{ maxWidth: 320, borderRadius: 6 }} />
                   </Descriptions.Item>
                 )}
               </Descriptions>
@@ -128,10 +146,13 @@ export default function RecordsPage() {
             {
               title: "",
               width: 100,
-              render: (_, row) =>
-                row.status === "blocked_fifo" ? (
-                  <Button size="small" onClick={() => setTarget(row)}>覆核放行</Button>
-                ) : null,
+              render: (_, row) => <Space wrap>
+                {row.status === "blocked_fifo" && can("scan.override") &&
+                  <Button size="small" onClick={() => setTarget(row)}>覆核放行</Button>}
+                {can("issue.detail") && <Button size="small" onClick={() => {
+                  detailForm.resetFields(); detailForm.setFieldsValue(row.field_values); setDetail(row);
+                }}>補登明細</Button>}
+              </Space>,
             },
           ]}
         />
@@ -144,6 +165,16 @@ export default function RecordsPage() {
 
       <Card title={`領用紀錄（${rows.length}）`}>{usageTab}</Card>
 
+      <Modal open={Boolean(detail)} title={`領用明細 #${detail?.id}`} onCancel={() => setDetail(null)}
+        onOk={saveDetail} confirmLoading={busy} okText="儲存" cancelText="取消" destroyOnHidden>
+        <Form form={detailForm} layout="vertical">
+          <Form.Item name="包裝機台" label="包裝機台"><Select allowClear showSearch
+            options={(dict?.entries.machine ?? []).map(e => ({value: e.value, label: e.value}))} /></Form.Item>
+          <Form.Item name="產品名稱" label="產品名稱"><Select allowClear showSearch
+            options={(dict?.entries.packed_product ?? []).map(e => ({value: e.value, label: e.value}))} /></Form.Item>
+          <Form.Item name="使用步徑" label="使用步徑（碼表）"><Input placeholder="例 557" /></Form.Item>
+        </Form>
+      </Modal>
       <Modal
         open={Boolean(target)}
         title={`覆核放行 #${target?.id}`}

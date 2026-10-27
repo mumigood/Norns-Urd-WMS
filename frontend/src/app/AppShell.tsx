@@ -48,18 +48,14 @@ const NAV = [
 ];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
-  // ChimesFlow SoT override (mode b), declared explicitly rather than drifted into:
-  //   KEPT     — the entire palette, component conventions, layout. No colour changes.
-  //   REPLACED — type scale only. antd's 14px base is sized for a desk monitor;
-  //              this runs on a tablet held at arm's length next to a packing line,
-  //              where 14px is unreadable without leaning in — and leaning in with
-  //              gloved hands and a box in the other arm is the thing this system
-  //              is supposed to remove.
-  // Reason: legibility at working distance, not aesthetics.
   return (
     <ConfigProvider
       locale={zhTW}
-      theme={{ token: { fontSize: 16, fontSizeHeading2: 30, fontSizeHeading3: 24, fontSizeHeading4: 20 } }}
+      theme={{
+        token: { fontSize: 16, fontSizeHeading2: 30, fontSizeHeading3: 24, fontSizeHeading4: 20,
+          controlHeight: 40, colorPrimary: "#1677ff", colorText: "#1f1f1f", colorBgLayout: "#f3f4f6" },
+        components: { Layout: { siderBg: "#0b1a2e" }, Menu: { darkItemBg: "#0b1a2e", darkItemColor: "#c8d0db" } },
+      }}
     >
       <AuthGate>
         <Shell>{children}</Shell>
@@ -69,7 +65,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 }
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const pathname = usePathname();
+  const pathname = usePathname().replace(/\/$/, "") || "/";
   const { can, user } = useAuth();
   const visible = NAV.filter((item) => !item.needs || can(item.needs));
 
@@ -97,7 +93,8 @@ function Shell({ children }: { children: React.ReactNode }) {
           display: "flex", flexDirection: "column",
         }}
       >
-        <div style={{ padding: "20px 16px 12px" }}>
+        <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+        <div style={{ padding: "20px 16px 12px", flexShrink: 0 }}>
           <Typography.Text style={{ color: "#fff", fontSize: 18, fontWeight: 600 }}>
             Urd-WMS
           </Typography.Text>
@@ -106,16 +103,17 @@ function Shell({ children }: { children: React.ReactNode }) {
         <Menu
           theme="dark"
           mode="inline"
-          style={{ flex: 1, overflowY: "auto" }}
+          style={{ flex: 1, minHeight: 0, overflowY: "auto" }}
           selectedKeys={[pathname]}
           items={visible.map(({ key, icon, label }) => ({ key, icon, label }))}
         />
-        <div style={{ padding: 16, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
+        <div style={{ padding: 16, flexShrink: 0, borderTop: "1px solid rgba(255,255,255,0.1)" }}>
           <UserBadge />
         </div>
+        </div>
       </Sider>
-      <Layout>
-        <Content style={{ padding: 24, background: "#f5f5f5" }}>
+      <Layout style={{ minWidth: 0 }}>
+        <Content style={{ padding: 24, background: "#f3f4f6" }}>
           {denied ? (
             <Result
               status="403"

@@ -37,6 +37,7 @@ pub struct Proposal {
     /// `supplier_code` | `model_in_label` | `manual`
     pub item_matched_on: Option<&'static str>,
     pub item_defer_reason: Option<&'static str>,
+    pub item_contenders: Vec<String>,
     pub decision: &'static str,
     pub defer_reason: Option<&'static str>,
     /// Which date on the box named the lot.
@@ -99,6 +100,7 @@ pub fn recognise(
         proposal.item_defer_reason = item_match.reason.map(|r| r.as_str());
         proposal.defer_reason = Some("item_unresolved");
     }
+    proposal.item_contenders = item_match.contenders;
     proposal.recognition = reading;
     Ok(proposal)
 }
@@ -110,6 +112,7 @@ pub fn resolve_item(conn: &Connection, proposal: &mut Proposal, item_id: i64) ->
     let reading = proposal.recognition.clone();
     proposal.item_matched_on = Some("manual");
     proposal.item_defer_reason = None;
+    proposal.item_contenders.clear();
     proposal.defer_reason = None;
     lot_lookup(conn, item_id, &reading, proposal)
 }
